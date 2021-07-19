@@ -19,7 +19,7 @@ def points_to_prob(points, shape, sigma = 1.5,  mode = "max"):
     """points are in (x,y) order!"""
 
     x = np.zeros(shape, np.float32)
-    points = np.asarray(points).astype(np.int)
+    points = np.asarray(points).astype(np.int32)
     assert points.ndim==2 and points.shape[1]==2
 
     if mode == "max":
@@ -86,7 +86,7 @@ def prob_to_points(prob, prob_thresh=.5, min_distance = 2, subpix=False):
 
 
 def points_to_label(points, shape = None, max_distance=3):
-    points = np.asarray(points).astype(np.int)
+    points = np.asarray(points).astype(np.int32)
     assert points.ndim==2 and points.shape[1]==2
 
     if shape is None:
@@ -104,8 +104,8 @@ def points_to_label(points, shape = None, max_distance=3):
 
         
 def points_matching(p1, p2, max_distance=3, report_matches=False):
-    p1 = np.asarray(p1).astype(np.int)
-    p2 = np.asarray(p2).astype(np.int)
+    p1 = np.asarray(p1).astype(np.int32)
+    p2 = np.asarray(p2).astype(np.int32)
     assert p1.ndim==2 and p1.shape[1]==2
     assert p2.ndim==2 and p2.shape[1]==2
     if len(p1)==0 or len(p2)==0:

@@ -10,13 +10,14 @@ if __name__ == '__main__':
 
     model = SpotNet(config, name = None, basedir = None)
 
-    X = np.zeros((5,128,128))
 
-    P = np.random.randint(0,128,(5,10,2))
+    P = np.random.randint(10,128-10,(5,30,2))
 
-    Y = np.stack(tuple(points_to_prob(p, shape=X.shape[1:], sigma=1) for p in P))
+    Y = np.stack(tuple(points_to_prob(p, shape=(128,128), sigma=1) for p in P))
+
+    X = Y + .3*np.random.normal(0,1,Y.shape)
     
-    model.train(X,Y, validation_data=[X,Y], steps_per_epoch=10)
+    model.train(X,Y, validation_data=[X,Y], steps_per_epoch=100)
 
 
 
