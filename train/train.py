@@ -18,7 +18,7 @@ np.random.seed(42)
 def get_data(folder, nfiles= None, sigma= 1):
     """points will be in (x,y) order! (reversed than for model.predict!) """
    
-    folder = Path(folder)
+    folder = Path("data")/folder
     
     fx = sorted(folder.glob("*.tif"))
 
@@ -54,7 +54,7 @@ if __name__ == '__main__':
                         help = "number of epochs to train")
     parser.add_argument("-o","--output", type=str, default="models")
     parser.add_argument("-d", "--dataset", type=str,
-                        default="data")
+                        default="train")
     parser.add_argument("-s", "--sigma", type=float, default=1.,
                         help = "sigma for gaussian blobs")
     parser.add_argument("--nfiles", type=int, default =None)
