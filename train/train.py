@@ -2,6 +2,9 @@ import numpy as np
 from tifffile import imread
 from tqdm import tqdm 
 from csbdeep.utils import normalize
+from csbdeep.utils.tf import limit_gpu_memory
+limit_gpu_memory(1, total_memory=12000)
+
 from pathlib import Path
 from augmend import Augmend, Elastic, Identity, FlipRot90, AdditiveNoise, CutOut, Scale, GaussianBlur, Rotate, IntensityScaleShift, IsotropicScale, BaseTransform
 import argparse
@@ -47,7 +50,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Training script for a spot net')
 
-    parser.add_argument("-n","--epochs", type=int, default=500,
+    parser.add_argument("-n","--epochs", type=int, default=200,
                         help = "number of epochs to train")
     parser.add_argument("-o","--output", type=str, default="models")
     parser.add_argument("-d", "--dataset", type=str,
@@ -60,7 +63,7 @@ if __name__ == '__main__':
     parser.add_argument("--augment", type=int, default=1,
                         help = "augmentation level (0,1,2)")
     parser.add_argument("--batch_size", type=int, default=4),
-    parser.add_argument("--steps_per_epoch", type=int, default=128),
+    parser.add_argument("--steps_per_epoch", type=int, default=512),
     parser.add_argument("--mode", type=str, choices = ["bce","scale_sum","mae", "mse"], default = "bce")
 
     args = parser.parse_args()
@@ -68,7 +71,7 @@ if __name__ == '__main__':
 
 
     X, Y, P = get_data(folder=args.dataset, sigma=args.sigma, nfiles=args.nfiles)
-    X, Xv, Y, Yv, P, Pv = train_test_split(X,Y,P, test_size=1)
+    X, Xv, Y, Yv, P, Pv = train_test_split(X,Y,P, test_size=1, random_state=42)
 
 
     config = Config(n_channel_in=1,
@@ -85,6 +88,7 @@ if __name__ == '__main__':
     model = SpotNet(config, name = None if args.dry else name, basedir = None if args.dry else args.output)
 
 
+    
     if args.augment==0:
         aug = None
 
@@ -115,5 +119,5 @@ if __name__ == '__main__':
                         steps_per_epoch=args.steps_per_epoch//args.batch_size,
                         workers=args.batch_size)
             
-        model.optimize_thresholds(Xv, Yv, verbose=2, save_to_json=False if args.dry else True)
+        model.optimize_thresholds(Xv, Yv, verbose=2, save_to_json=False if args.dry else True, optimize_kwargs=dict(bracket=(.3,.7)))
                                

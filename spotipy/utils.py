@@ -190,7 +190,7 @@ def voronoize_from_prob(prob,prob_thresh =0.9):
     return dist_closest
 
 
-def optimize_threshold(Y, Yhat, model, measure='accuracy', bracket=None, tol=1e-2, maxiter=20, verbose=1):
+def optimize_threshold(Y, Yhat, model, measure='accuracy', bracket=None, tol=1e-4, maxiter=80, verbose=1):
     values = dict()
 
     if bracket is None:
