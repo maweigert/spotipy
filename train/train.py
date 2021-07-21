@@ -3,14 +3,14 @@ from tifffile import imread
 from tqdm import tqdm 
 from csbdeep.utils import normalize
 from csbdeep.utils.tf import limit_gpu_memory
-limit_gpu_memory(1, total_memory=12000)
+limit_gpu_memory(1, total_memory=6000)
 
 from pathlib import Path
 from augmend import Augmend, Elastic, Identity, FlipRot90, AdditiveNoise, CutOut, Scale, GaussianBlur, Rotate, IntensityScaleShift, IsotropicScale, BaseTransform
 import argparse
 from sklearn.model_selection import train_test_split
 from spotipy.model import Config, SpotNetData, SpotNet
-from spotipy.utils import points_to_prob
+from spotipy.utils import points_to_prob, str2bool
 
 np.random.seed(42)
 
@@ -64,27 +64,28 @@ if __name__ == '__main__':
                         help = "augmentation level (0,1,2)")
     parser.add_argument("--batch_size", type=int, default=4),
     parser.add_argument("--steps_per_epoch", type=int, default=512),
-    parser.add_argument("--mode", type=str, choices = ["bce","scale_sum","mae", "mse"], default = "bce")
+    parser.add_argument("--loss", type=str, choices = ["bce","scale_sum","mae", "mse"], default = "bce")
+    parser.add_argument("--multiscale", type=str2bool, default="y"),
 
     args = parser.parse_args()
 
 
 
     X, Y, P = get_data(folder=args.dataset, sigma=args.sigma, nfiles=args.nfiles)
-    X, Xv, Y, Yv, P, Pv = train_test_split(X,Y,P, test_size=1, random_state=42)
+    X, Xv, Y, Yv, P, Pv = train_test_split(X,Y,P, test_size=max(1, len(X)//12), random_state=37)
 
 
     config = Config(n_channel_in=1,
                     unet_n_depth = 3,
-                    unet_pool = 4,
-                    spot_weight = 1 if args.mode=="scale_sum" else 10,
-                    multiscale = True,
-                    mode = args.mode,
+                    unet_pool = 2,
+                    spot_weight = 1 if args.loss=="scale_sum" else 10,
+                    multiscale = args.multiscale,
+                    mode = args.loss,
                     train_learning_rate = 3e-4, 
-                    spot_weight_decay = 0.,
+                    spot_weight_decay = .0,
                     train_batch_size=args.batch_size)
 
-    name = f"{args.dataset}_{args.mode}_aug_{args.augment}_sigma_{args.sigma:.1f}_batch_{args.batch_size}_n_{args.epochs}"
+    name = f"{args.dataset}_multiscale_{args.multiscale}_{args.loss}_aug_{args.augment}_sigma_{args.sigma:.1f}_batch_{args.batch_size}_n_{args.epochs}"
     model = SpotNet(config, name = None if args.dry else name, basedir = None if args.dry else args.output)
 
 
@@ -95,17 +96,23 @@ if __name__ == '__main__':
     elif args.augment==1:
         aug = Augmend()
         aug.add([FlipRot90(axis = (0,1)),FlipRot90(axis = (0,1))])
-        aug.add([IntensityScaleShift(axis = (0,1), scale=(.3,2.5), shift=(-.1,.1)),Identity()])
         
     elif args.augment==2:
         aug = Augmend()
         aug.add([FlipRot90(axis = (0,1)),FlipRot90(axis = (0,1))])
         aug.add([Rotate(axis = (0,1)),Rotate(axis = (0,1))])
+        aug.add([AdditiveNoise(sigma=(0,.04)),Identity()], probability=.5)
+        aug.add([IntensityScaleShift(axis = (0,1), scale=(.8,1.3), shift=(-.1,.1)),Identity()])
+        
+    elif args.augment==3:
+        aug = Augmend()
+        aug.add([FlipRot90(axis = (0,1)),FlipRot90(axis = (0,1))])
+        aug.add([Rotate(axis = (0,1)),Rotate(axis = (0,1))])
         t = Elastic(amount=5, grid=10, order=0,axis = (0,1))
         aug.add([t,t])
-        aug.add([GaussianBlur(axis = (0,1),amount = (0,1.5)),Identity()], probability=.8)
+        # aug.add([GaussianBlur(axis = (0,1),amount = (0,1.5)),Identity()], probability=.8)
         aug.add([AdditiveNoise(sigma=(0,.04)),Identity()], probability=.5)
-        aug.add([IntensityScaleShift(axis = (0,1), scale=(.3,2.5), shift=(-.1,.1)),Identity()])
+        aug.add([IntensityScaleShift(axis = (0,1), scale=(.8,1.3), shift=(-.1,.1)),Identity()])
 
     else:
         raise NotImplementedError(args.augment)

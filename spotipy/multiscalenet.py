@@ -67,17 +67,17 @@ def multiscale_unet(
     # ...and up with skip layers
     for n in reversed(range(n_depth)):
 
-        multi = layer
         for i in range(n_conv_per_depth):
-            multi = conv_block(n_filter_base, kernel_size, kernel_size,
+            layer = conv_block(n_filter_base, kernel_size, kernel_size,
                                    dropout=dropout,
                                    init=kernel_init,
                                    activation=activation,
-                                   batch_norm=batch_norm, name=_name("multi_level_%s_no_%s" % (n, i)))(multi)
+                                   batch_norm=batch_norm, name=_name("multi_level_%s_no_%s" % (n, i)))(layer)
+        multi = conv_block(n_filter_base,3,3,activation=activation, name =_name("multi_pre_%s" %n))(layer)
         multi = conv_block(n_channel_out,1,1,activation=last_activation, name =_name("multi_%s" %n))(multi)
 
         layer = tf.keras.layers.Concatenate(axis=channel_axis)([
-            upsampling(pool_size)(layer), skip_layers[n], upsampling(pool_size)(multi)
+            upsampling(pool_size)(layer), skip_layers[n], upsampling(pool_size)(layer)
         ])
 
         multiscale_layers.append(multi)

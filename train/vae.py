@@ -1,6 +1,11 @@
 import numpy as np
 import tensorflow as tf
 from train import get_data
+from csbdeep.internals.blocks import unet_block
+from scipy.ndimage import gaussian_filter
+from augmend import Augmend, Elastic, Identity, FlipRot90, AdditiveNoise, CutOut, Scale, GaussianBlur, Rotate, IntensityScaleShift, IsotropicScale, BaseTransform
+
+
 
 class Sampling(tf.keras.layers.Layer):
     """Uses (z_mean, z_log_var) to sample z, the vector encoding a digit."""
@@ -20,8 +25,7 @@ class VAE(tf.keras.Model):
     
         encoder_inp = tf.keras.layers.Input((None,None,1))
         x = encoder_inp
-        for _ in range(3):
-            x = tf.keras.layers.Conv2D(32,3,padding='same', activation='relu')(x)
+        x = unet_block(3,32,last_activation='relu')(x)
         z_mean = tf.keras.layers.Conv2D(latent_dim,1,padding='same', activation='linear')(x)
         z_logvar = tf.keras.layers.Conv2D(latent_dim,1,padding='same', activation='linear')(x)
         z = Sampling()([z_mean, z_logvar])
@@ -31,8 +35,7 @@ class VAE(tf.keras.Model):
         decoder_inp = tf.keras.layers.Input(shape=(None,None, 1))
         decoder_inp_latent = tf.keras.layers.Input(shape=(None,None, latent_dim))
         x = tf.keras.layers.Concatenate(axis=-1)([decoder_inp, decoder_inp_latent])
-        for _ in range(3):
-            x = tf.keras.layers.Conv2D(32,3,padding='same', activation='relu')(x)
+        x = unet_block(3,32,last_activation='relu')(x)
         out = tf.keras.layers.Conv2D(1,3,padding='same', activation='linear')(x)
         self.decoder = tf.keras.Model([decoder_inp, decoder_inp_latent], out, name="decoder")
 
@@ -76,12 +79,24 @@ class VAE(tf.keras.Model):
 if __name__ == '__main__':
 
 
-    X, Y, P = get_data(folder='train', sigma=1, nfiles=2)
+    X, Y, P = get_data(folder='train', sigma=4)
     
+    aug = Augmend()
+    aug.add([FlipRot90(axis = (0,1)),FlipRot90(axis = (0,1))])
+    aug.add([Rotate(axis = (0,1)),Rotate(axis = (0,1))])
+    t = Elastic(amount=5, grid=10, order=0,axis = (0,1))
+    aug.add([t,t])
 
-    X = np.expand_dims(X,-1)
-    Y = np.expand_dims(Y,-1)
+    X2, Y2 = [], []
+    for x,y in zip(X,Y):
+        for _ in range(50):
+            x2,y2 = aug([x,y])
+            X2.append(x2)
+            Y2.append(y2)
+    
+    X = np.expand_dims(np.stack(X2),-1)
+    Y = np.expand_dims(np.stack(Y2),-1)
      
     model = VAE()
     model.compile(optimizer=tf.keras.optimizers.Adam(lr=3e-4))
-    model.fit(X,Y, epochs=30, batch_size=128)    
+    model.fit(X,Y, epochs=100, batch_size=16)    

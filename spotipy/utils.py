@@ -311,3 +311,22 @@ def center_crop(x, shape):
     ss = tuple(slice(int(np.ceil(d/2)),s-d+int(np.ceil(d/2))) if d>0 else slice(None) for d,s in zip(diff,x.shape))
     return x[ss]
 
+
+def str2bool(v):
+    if v.lower() in ('yes', 'true', 'True', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'False', 'f', 'n', '0'):
+        return False
+    else:
+        raise ValueError('Boolean value expected.')
+
+
+def str2scalar(dtype):
+    def _f(v):
+        if v.lower() == "none":
+            return None
+        else:
+            return dtype(v)
+
+    return _f
+
