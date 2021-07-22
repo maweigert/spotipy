@@ -19,6 +19,8 @@ if __name__ == '__main__':
                         help = "input images")
     parser.add_argument("-o","--output", type=str, default=None,
                         help = "output directory")
+    parser.add_argument("-p","--plot", type=str, default=None,
+                        help = "output directory")
     parser.add_argument("-m", "--model", type=str,
                         default="models/train_multiscale_True_bce_aug_3_sigma_1.0_batch_4_n_101")
 
@@ -56,5 +58,8 @@ if __name__ == '__main__':
         plt.suptitle(f'{Path(f).name}')
         plt.tight_layout()
 
+        if args.plot is not None:
+            plt.savefig(f"{Path(args.plot)}/result_{Path(f).name}.png")
+
         if args.output is not None:
-            plt.savefig(f"{Path(args.output)}/result_{Path(f).name}.png")
+            np.savetxt(f"{Path(args.output)}/result_{Path(f).name}.csv", points, delimiter=",")
