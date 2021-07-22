@@ -59,7 +59,9 @@ class SpotNetData(RollingSequence):
 
 def weighted_bce_loss(extra_weight=1):
     def _loss(y_true,y_pred):
-        mask = tf.keras.backend.cast(y_true>0.001, tf.keras.backend.floatx())
+        mask_true = tf.keras.backend.cast(y_true>0.01, tf.keras.backend.floatx())
+        mask_pred = tf.keras.backend.cast(y_pred>0.01, tf.keras.backend.floatx())
+        mask = tf.keras.backend.maximum(mask_true, mask_pred)
         loss = (1+extra_weight*mask)*tf.keras.backend.binary_crossentropy(y_true, y_pred)
         return loss        
     return _loss
