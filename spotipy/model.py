@@ -5,6 +5,13 @@ import warnings
 from tqdm import tqdm 
 from collections import namedtuple
 from itertools import product
+import threading
+from scipy.ndimage import zoom
+from scipy.ndimage.filters import maximum_filter
+from functools import lru_cache
+import tensorflow as tf
+from concurrent.futures import ThreadPoolExecutor
+
 from csbdeep.internals.nets import custom_unet
 from csbdeep.internals.train import ParameterDecayCallback
 from csbdeep.internals.predict import tile_iterator
@@ -13,48 +20,11 @@ from csbdeep.utils.tf import export_SavedModel, CARETensorBoard, CARETensorBoard
 from csbdeep.models import BaseModel, BaseConfig, CARE
 from csbdeep.models import Config as CareConfig
 from csbdeep.internals.train import RollingSequence
-from scipy.ndimage import zoom
-from functools import lru_cache
-import tensorflow as tf
-from concurrent.futures import ThreadPoolExecutor
-
+from stardist.sample_patches import get_valid_inds, sample_patches
 
 from .multiscalenet import multiscale_unet
 from .utils import prob_to_points, points_matching, optimize_threshold, points_bipartite_matching, multiscale_decimate, voronoize_from_prob, center_pad, center_crop
 
-
-class SpotNetData(RollingSequence):
-    """ creates a generator from data"""
-    def __init__(self, datas, length, batch_size=4, augmenter = None, workers=1):
-        """datas has to be a tuple of all input/output lists, e.g.  
-        datas = (X,Y)
-        """
-        if not all(len(d) == len(datas[0]) for d in datas):
-            raise ValueError("All elements of datas should have same length")
-        assert len(datas[0])>=batch_size
-        
-        self.datas = datas
-        self.batch_size = batch_size
-        self.augmenter = augmenter
-        self.workers = workers
-        super().__init__(data_size=len(self.datas[0]),
-                         batch_size=batch_size, length=length, shuffle=True)
-
-    def __getitem__(self, i):
-        idx = self.batch(i)
-                  
-        xs = tuple(d[idx,...] for d in self.datas)
-        if self.augmenter is not None:
-            if self.workers>1:
-                with ThreadPoolExecutor(max_workers=min(self.batch_size,8)) as e:
-                    xs = tuple(np.stack(t) for t in zip(*tuple(e.map(self.augmenter,zip(*xs)))))
-            else:
-                xs = tuple(np.stack(t) for t in zip(*(self.augmenter(x) for x in zip(*xs))))
-
-                
-        return tuple(x[...,np.newaxis] if x.ndim<4 else x for x in xs)
-        
-   
 
 
 def weighted_bce_loss(extra_weight=1):
@@ -210,7 +180,7 @@ class AccuracyCallback(tf.keras.callbacks.Callback):
 
 
 class Config(CareConfig):
-    def __init__(self,axes = "YX", mode = "bce", n_channel_in = 1, unet_n_depth = 3, spot_weight = 5,  spot_weight_decay=.1 , multiscale=True,  **kwargs):
+    def __init__(self,axes = "YX", mode = "bce", n_channel_in = 1, unet_n_depth = 3, spot_weight = 5,  spot_weight_decay=.1 , multiscale=True, train_patch_size=(256,256), **kwargs):
         kwargs.setdefault("train_batch_size",2)
         kwargs.setdefault("train_reduce_lr", {'factor': 0.5, 'patience': 40})
         kwargs.setdefault("n_channel_in",n_channel_in)
@@ -221,6 +191,7 @@ class Config(CareConfig):
         super().__init__(axes=axes, unet_n_depth=unet_n_depth,
                          allow_new_parameters=True, **kwargs)
         self.train_spot_weight = spot_weight
+        self.train_patch_size = train_patch_size
         self.train_spot_weight_decay = spot_weight_decay
         self.multiscale = multiscale        
         if mode in ("mae", "mse", "bce", "scale_sum", "focal"):
@@ -230,7 +201,102 @@ class Config(CareConfig):
 
 
 
+
+class SpotNetData(RollingSequence):
+    """ creates a generator from data"""
+    def __init__(self, X,Y, patch_size, length, batch_size=4,  augmenter = None, workers=1, sample_ind_cache=True, maxfilter_patch_size=None, foreground_prob=0):
+        """datas has to be a tuple of all input/output lists, e.g.  
+        datas = (X,Y)
+        """
+
+        nD = len(patch_size)
+        assert nD==2
+        x_ndim = X[0].ndim
+        assert x_ndim in (nD,nD+1)
+
+
+        assert len(X)==len(Y)
+        assert all(tuple(x.shape[:2]==y.shape for x,y in zip(X,Y)))
+        assert len(X)>=batch_size
         
+        if x_ndim == nD:
+            self.n_channel = None
+        else:
+            self.n_channel = X[0].shape[-1]
+
+        assert 0 <= foreground_prob <= 1
+        
+        super().__init__(data_size=len(X),
+                         batch_size=batch_size, length=length, shuffle=True)
+
+        self.X, self.Y = X, Y
+        self.batch_size = batch_size
+        self.patch_size = patch_size
+        self.augmenter = augmenter
+        self.workers = workers
+        self.foreground_prob = foreground_prob
+            
+        self.max_filter = lambda y, patch_size: maximum_filter(y, patch_size, mode='constant')
+            
+        self.maxfilter_patch_size = maxfilter_patch_size if maxfilter_patch_size is not None else self.patch_size
+
+        self.sample_ind_cache = sample_ind_cache
+        self._ind_cache_fg  = {}
+        self._ind_cache_all = {}
+        self.lock = threading.Lock()        
+
+    def channels_as_tuple(self, x):
+        if self.n_channel is None:
+            return (x,)
+        else:
+            return tuple(x[...,i] for i in range(self.n_channel))
+
+
+    def get_valid_inds(self, k, foreground_prob=None):
+        if foreground_prob is None:
+            foreground_prob = self.foreground_prob
+        foreground_only = np.random.uniform() < foreground_prob
+        _ind_cache = self._ind_cache_fg if foreground_only else self._ind_cache_all
+        if k in _ind_cache:
+            inds = _ind_cache[k]
+        else:
+            patch_filter = (lambda y,p: self.max_filter(y, self.maxfilter_patch_size) > 0) if foreground_only else None
+            inds = get_valid_inds((self.Y[k],)+self.channels_as_tuple(self.X[k]), self.patch_size, patch_filter=patch_filter)
+            if self.sample_ind_cache:
+                with self.lock:
+                    _ind_cache[k] = inds
+        if foreground_only and len(inds[0])==0:
+            # no foreground pixels available
+            return self.get_valid_inds(k, foreground_prob=0)
+        return inds
+
+    
+    def __getitem__(self, i):
+        idx = self.batch(i)
+
+        arrays = [sample_patches((self.Y[k],) + self.channels_as_tuple(self.X[k]),
+                                 patch_size=self.patch_size, n_samples=1,
+                                 valid_inds=self.get_valid_inds(k)) for k in idx]
+
+        X,Y = list(zip(*[(x[0],y[0]) for y,x in arrays]))
+
+        if self.augmenter is not None:
+            if self.workers>1:
+                with ThreadPoolExecutor(max_workers=min(self.batch_size,8)) as e:
+                    X,Y = tuple(np.stack(t) for t in zip(*tuple(e.map(self.augmenter,zip(X,Y)))))
+            else:
+                X,Y = tuple(np.stack(t) for t in zip(*(self.augmenter(x) for x in zip(X,Y))))
+
+        X = np.stack(X)
+        Y = np.stack(Y)
+        
+        if X.ndim == 3: # input image has no channel axis
+            X = np.expand_dims(X,-1)
+        Y = np.expand_dims(Y,-1)
+
+        return X,Y
+
+    
 class SpotNet(CARE):
 
     def __init__(self, config, name=None, basedir='.'):
@@ -410,13 +476,6 @@ class SpotNet(CARE):
         ((isinstance(validation_data,(list,tuple)) and len(validation_data)==2)
             or _raise(ValueError('validation_data must be a pair of numpy arrays')))
 
-        validation_data = list(v[...,np.newaxis] if v.ndim<4 else v for v in validation_data)
-        self._x =  validation_data
-        n_train, n_val = len(X), len(validation_data[0])
-        frac_val = (1.0 * n_val) / (n_train + n_val)
-        frac_warn = 0.05
-        if frac_val < frac_warn:
-            warnings.warn("small number of validation images (only %.1f%% of all images)" % (100*frac_val))
         if self.config.n_channel_in==1:
             axes = self.config.axes.replace('C','')
         else:
@@ -440,11 +499,18 @@ class SpotNet(CARE):
         if not self._model_prepared:
             self.prepare_for_training()
             
-        self.data = SpotNetData((X, Y),
+        self.data = SpotNetData(X, Y,
                                 augmenter = augmenter,
                                 length = epochs*steps_per_epoch,
+                                patch_size=self.config.train_patch_size,
                                 workers=workers,
                                 batch_size=self.config.train_batch_size)
+        
+        _data_val = SpotNetData(validation_data[0],validation_data[1],
+                                batch_size=len(validation_data[0]), length=1,
+                                patch_size=self.config.train_patch_size
+                                )
+        validation_data = _data_val[0]
 
         if self.config.multiscale:
             validation_data = (validation_data[0],

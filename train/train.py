@@ -110,7 +110,7 @@ if __name__ == '__main__':
         aug = Augmend()
         aug.add([FlipRot90(axis = (0,1)),FlipRot90(axis = (0,1))])
         aug.add([Rotate(axis = (0,1)),Rotate(axis = (0,1))])
-        t = Elastic(amount=5, grid=10, order=0,axis = (0,1))
+        t = Elastic(amount=5, grid=5, order=0,axis = (0,1))
         aug.add([t,t])
         aug.add([GaussianBlur(axis = (0,1),amount = (0,1.5)),Identity()], probability=.5)
         aug.add([AdditiveNoise(sigma=(0,.04)),Identity()], probability=.5)
