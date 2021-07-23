@@ -22,7 +22,7 @@ from csbdeep.models import Config as CareConfig
 from csbdeep.internals.train import RollingSequence
 from stardist.sample_patches import get_valid_inds, sample_patches
 
-from .multiscalenet import multiscale_unet
+from .multiscalenet import multiscale_unet, multiscale_resunet
 from .utils import prob_to_points, points_matching, optimize_threshold, points_bipartite_matching, multiscale_decimate, voronoize_from_prob, center_pad, center_crop
 
 
@@ -180,7 +180,7 @@ class AccuracyCallback(tf.keras.callbacks.Callback):
 
 
 class Config(CareConfig):
-    def __init__(self,axes = "YX", mode = "bce", n_channel_in = 1, unet_n_depth = 3, spot_weight = 5,  spot_weight_decay=.1 , multiscale=True, train_patch_size=(256,256), **kwargs):
+    def __init__(self,axes = "YX", mode = "bce", n_channel_in = 1, unet_n_depth = 3, spot_weight = 5,  spot_weight_decay=.1 , backbone="unet", activation="relu", last_activation="sigmoid", multiscale=True, train_patch_size=(256,256), **kwargs):
         kwargs.setdefault("train_batch_size",2)
         kwargs.setdefault("train_reduce_lr", {'factor': 0.5, 'patience': 40})
         kwargs.setdefault("n_channel_in",n_channel_in)
@@ -193,7 +193,13 @@ class Config(CareConfig):
         self.train_spot_weight = spot_weight
         self.train_patch_size = train_patch_size
         self.train_spot_weight_decay = spot_weight_decay
-        self.multiscale = multiscale        
+        self.multiscale = multiscale
+        self.last_activation = last_activation
+        self.activation = activation
+
+        assert backbone in ('unet', 'resunet')
+        self.backbone = backbone
+        
         if mode in ("mae", "mse", "bce", "scale_sum", "focal"):
             self.mode = mode
         else:
@@ -331,14 +337,29 @@ class SpotNet(CARE):
     def _build(self):
         
         if self.config.multiscale:
-            model, scales = multiscale_unet(
-                input_shape = (None,None,self.config.n_channel_in),
-                n_depth=self.config.unet_n_depth,
-                n_filter_base=self.config.unet_n_first,
-                kernel_size = self.config.unet_kern_size,
-                pool_size=self.config.unet_pool,
-                last_activation="linear" if self.config.mode=="scale_sum" else "sigmoid"
-            )
+            if self.config.backbone=='unet':
+                model, scales = multiscale_unet(
+                    input_shape = (None,None,self.config.n_channel_in),
+                    n_depth=self.config.unet_n_depth,
+                    n_filter_base=self.config.unet_n_first,
+                    kernel_size = self.config.unet_kern_size,
+                    pool_size=self.config.unet_pool,
+                    activation=self.config.activation,
+                    last_activation=self.config.last_activation
+                )
+            elif self.config.backbone=='resunet':
+                model, scales = multiscale_resunet(
+                    input_shape = (None,None,self.config.n_channel_in),
+                    n_depth=self.config.unet_n_depth,
+                    n_filter_base=self.config.unet_n_first,
+                    kernel_size = self.config.unet_kern_size,
+                    pool_size=self.config.unet_pool,
+                    activation=self.config.activation,
+                    last_activation=self.config.last_activation
+                )
+            else:
+                raise ValueError(self.backbone)
+            
             self.multiscale_factors = scales
             prelast_layer = model.layers[-2]
 
@@ -347,8 +368,9 @@ class SpotNet(CARE):
                            n_depth=self.config.unet_n_depth,
                            n_filter_base=self.config.unet_n_first,
                            kernel_size = (self.config.unet_kern_size,)*2,
+                            activation=self.config.activation,
                            pool_size=(self.config.unet_pool,self.config.unet_pool),
-                           last_activation="linear" if self.config.mode=="scale_sum" else "sigmoid"
+                           last_activation=self.config.last_activation
                             )
             prelast_layer = model.layers[-2]
 
