@@ -44,7 +44,7 @@ class SpotNetData(RollingSequence):
         idx = self.batch(i)
                   
         xs = tuple(d[idx,...] for d in self.datas)
-        if self.augmenter:
+        if self.augmenter is not None:
             if self.workers>1:
                 with ThreadPoolExecutor(max_workers=min(self.batch_size,8)) as e:
                     xs = tuple(np.stack(t) for t in zip(*tuple(e.map(self.augmenter,zip(*xs)))))
@@ -59,12 +59,31 @@ class SpotNetData(RollingSequence):
 
 def weighted_bce_loss(extra_weight=1):
     def _loss(y_true,y_pred):
-        mask_true = tf.keras.backend.cast(y_true>0.01, tf.keras.backend.floatx())
-        mask_pred = tf.keras.backend.cast(y_pred>0.01, tf.keras.backend.floatx())
-        mask = tf.keras.backend.maximum(mask_true, mask_pred)
+        # mask_true = tf.keras.backend.cast(y_true>0.01, tf.keras.backend.floatx())
+        # mask_pred = tf.keras.backend.cast(y_pred>0.1, tf.keras.backend.floatx())
+        # mask = tf.keras.backend.maximum(mask_true, mask_pred)
+        mask = tf.keras.backend.cast(y_true>0.001, tf.keras.backend.floatx())
         loss = (1+extra_weight*mask)*tf.keras.backend.binary_crossentropy(y_true, y_pred)
         return loss        
     return _loss
+
+def focal_loss(extra_weight=1, gamma=2):
+    def _loss(y_true,y_pred):
+        mask = tf.keras.backend.cast(y_true>0.001, tf.keras.backend.floatx())
+
+        eps  = tf.keras.backend.epsilon()
+        y_pred = tf.keras.backend.clip(y_pred, eps, 1.0 - eps)
+        # Calculate cross entropy
+        ce1 = -tf.math.log(y_pred)
+        w1 = tf.math.pow((1 - y_pred), gamma)
+        ce2 = -tf.math.log(1-y_pred)
+        w2 = tf.math.pow(y_pred, gamma)
+        loss = y_true*ce1*w1 + (1-y_true)*ce2*w2
+
+        loss = (1+extra_weight*mask)*loss
+        return loss        
+    return _loss
+
 
 
 def weighted_mae_loss(extra_weight=1):
@@ -204,7 +223,7 @@ class Config(CareConfig):
         self.train_spot_weight = spot_weight
         self.train_spot_weight_decay = spot_weight_decay
         self.multiscale = multiscale        
-        if mode in ("mae", "mse", "bce", "scale_sum"):
+        if mode in ("mae", "mse", "bce", "scale_sum", "focal"):
             self.mode = mode
         else:
             raise ValueError(mode)
@@ -320,6 +339,9 @@ class SpotNet(CARE):
             loss = [weighted_mae_loss(weight)]
         elif self.config.mode == "scale_sum":
             loss = [scale_sum(weight)]
+        elif self.config.mode == "focal":
+            loss = [focal_loss(2.0, weight)]
+                    
         else:
             raise ValueError(self.config.mode)
         

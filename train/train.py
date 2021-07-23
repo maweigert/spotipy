@@ -6,7 +6,7 @@ from csbdeep.utils.tf import limit_gpu_memory
 limit_gpu_memory(1, total_memory=6000)
 
 from pathlib import Path
-from augmend import Augmend, Elastic, Identity, FlipRot90, AdditiveNoise, CutOut, Scale, GaussianBlur, Rotate, IntensityScaleShift, IsotropicScale, BaseTransform
+from augmend import Augmend, Elastic, Identity, FlipRot90, AdditiveNoise, Scale, GaussianBlur, Rotate, IntensityScaleShift, DropEdgePlanes
 import argparse
 from sklearn.model_selection import train_test_split
 from spotipy.model import Config, SpotNetData, SpotNet
@@ -54,7 +54,7 @@ if __name__ == '__main__':
                         help = "number of epochs to train")
     parser.add_argument("-o","--output", type=str, default="models")
     parser.add_argument("-d", "--dataset", type=str,
-                        default="train")
+                        default="train_curated")
     parser.add_argument("-s", "--sigma", type=float, default=1.,
                         help = "sigma for gaussian blobs")
     parser.add_argument("--nfiles", type=int, default =None)
@@ -63,8 +63,8 @@ if __name__ == '__main__':
     parser.add_argument("--augment", type=int, default=1,
                         help = "augmentation level (0,1,2)")
     parser.add_argument("--batch_size", type=int, default=4),
-    parser.add_argument("--steps_per_epoch", type=int, default=512),
-    parser.add_argument("--loss", type=str, choices = ["bce","scale_sum","mae", "mse"], default = "bce")
+    parser.add_argument("--steps_per_epoch", type=int, default=1024),
+    parser.add_argument("--loss", type=str, choices = ["bce","scale_sum","mae", "mse","focal"], default = "bce")
     parser.add_argument("--multiscale", type=str2bool, default="y"),
 
     args = parser.parse_args()
@@ -75,10 +75,12 @@ if __name__ == '__main__':
     X, Xv, Y, Yv, P, Pv = train_test_split(X,Y,P, test_size=max(1, len(X)//12), random_state=37)
 
 
+    print(f'number of training   images:  {len(X)}')
+    print(f'number of validation images:  {len(Xv)}')
     config = Config(n_channel_in=1,
                     unet_n_depth = 3,
                     unet_pool = 2,
-                    spot_weight = 1 if args.loss=="scale_sum" else 10,
+                    spot_weight = 0 if args.loss in ("scale_sum", "focal") else 10,
                     multiscale = args.multiscale,
                     mode = args.loss,
                     train_learning_rate = 3e-4, 
@@ -110,9 +112,10 @@ if __name__ == '__main__':
         aug.add([Rotate(axis = (0,1)),Rotate(axis = (0,1))])
         t = Elastic(amount=5, grid=10, order=0,axis = (0,1))
         aug.add([t,t])
-        # aug.add([GaussianBlur(axis = (0,1),amount = (0,1.5)),Identity()], probability=.8)
+        aug.add([GaussianBlur(axis = (0,1),amount = (0,1.5)),Identity()], probability=.5)
         aug.add([AdditiveNoise(sigma=(0,.04)),Identity()], probability=.5)
-        aug.add([IntensityScaleShift(axis = (0,1), scale=(.8,1.3), shift=(-.1,.1)),Identity()])
+        aug.add([IntensityScaleShift(axis = (0,1), scale=(.5,2.), shift=(-.1,.1)),Identity()])
+        aug.add([DropEdgePlanes(width=16), DropEdgePlanes(width=16)], probability=.2)
 
     else:
         raise NotImplementedError(args.augment)
