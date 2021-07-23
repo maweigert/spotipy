@@ -22,6 +22,15 @@ def points_to_prob(points, shape, sigma = 1.5,  mode = "max"):
     points = np.asarray(points).astype(np.int32)
     assert points.ndim==2 and points.shape[1]==2
 
+    inds = np.bitwise_and(
+        np.bitwise_and(points[:,0]>=0,points[:,0]<shape[1]),
+        np.bitwise_and(points[:,1]>=0,points[:,1]<shape[0]))
+    
+    points = points[inds]
+
+    if len(points)==0:
+        return x 
+    
     if mode == "max":
         D = cdist(points, points)
         A = D < 8*sigma+1
