@@ -64,16 +64,13 @@ if __name__ == '__main__':
                         help = "augmentation level (0,1,2)")
     parser.add_argument("--batch_size", type=int, default=4),
     parser.add_argument("--steps_per_epoch", type=int, default=1024),
-    parser.add_argument("--loss", type=str, choices = ["bce","scale_sum","mae", "mse","focal"], default = "bce")
+    parser.add_argument("--loss", type=str, choices = ["bce","scale_sum","mae", "mse","focal"], default = "mae")
     parser.add_argument("--multiscale", type=str2bool, default="y"),
 
     args = parser.parse_args()
 
-
-
     X, Y, P = get_data(folder=args.dataset, sigma=args.sigma, nfiles=args.nfiles)
     X, Xv, Y, Yv, P, Pv = train_test_split(X,Y,P, test_size=max(1, len(X)//12), random_state=37)
-
 
     print(f'number of training   images:  {len(X)}')
     print(f'number of validation images:  {len(Xv)}')
@@ -110,7 +107,7 @@ if __name__ == '__main__':
         aug = Augmend()
         aug.add([FlipRot90(axis = (0,1)),FlipRot90(axis = (0,1))])
         aug.add([Rotate(axis = (0,1)),Rotate(axis = (0,1))])
-        t = Elastic(amount=5, grid=5, order=0,axis = (0,1))
+        t = Elastic(amount=5, grid=5, order=0, axis = (0,1))
         aug.add([t,t])
         aug.add([GaussianBlur(axis = (0,1),amount = (0,1.5)),Identity()], probability=.5)
         aug.add([AdditiveNoise(sigma=(0,.04)),Identity()], probability=.5)
