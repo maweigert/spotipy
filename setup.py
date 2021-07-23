@@ -34,6 +34,7 @@ setup(
         'scikit-image',
         'numba',
         'csbdeep',
+        'opencv-python'
     ],
 
 )

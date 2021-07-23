@@ -1,6 +1,7 @@
 import numpy as np
 import sys
 import datetime
+import warnings
 from csbdeep.utils import normalize
 from scipy.ndimage.filters import gaussian_filter
 from scipy.ndimage import map_coordinates, zoom
@@ -330,3 +331,71 @@ def str2scalar(dtype):
 
     return _f
 
+
+
+def normalize_fast2d(x, pmin=1, pmax=99.8, dst_range=(0,1.), clip = False, sub = 4, blocksize=None, order=1, ignore_val=None):
+    """
+    normalizes a 2d image
+    if blocksize is not None (e.g. 512), computes adaptive/blockwise percentiles
+    """
+    assert x.ndim==2
+
+    out_slice = slice(None),slice(None)
+    
+    if blocksize is None:
+        x_sub = x[::sub,::sub]
+        if ignore_val is not None:
+            x_sub = x_sub[x_sub!=ignore_val]
+        mi, ma = np.percentile(x_sub,(pmin,pmax))#.astype(x.dtype)
+        print(f"normalizing_fast with mi = {mi:.2f}, ma = {ma:.2f}")        
+    else:
+        from csbdeep.internals.predict import tile_iterator_1d
+        try:
+            import cv2
+        except ImportError:
+            raise ImportError("normalize_adaptive() needs opencv, which is missing. Please install it via 'pip install opencv-python'")
+
+        if np.isscalar(blocksize):
+            blocksize = (blocksize, )*2
+            
+        if not all(s%b==0 for s,b in zip(x.shape, blocksize)):
+            warnings.warn(f"image size {x.shape} not divisible by blocksize {blocksize}")
+            pads = tuple(s%b for b, s in zip(blocksize, x.shape))
+            out_slice = tuple(slice(0,s) for s in x.shape)
+            print('padding')
+            x = np.pad(x,tuple((0,p) for p in pads), mode='reflect')
+            
+        n_tiles = tuple(max(1,s//b) for s,b in zip(x.shape, blocksize))
+        
+        print(f"normalizing_fast adaptively with {n_tiles} tiles and order {order}")        
+        mi, ma = np.zeros(n_tiles, x.dtype), np.zeros(n_tiles, x.dtype)
+
+        kwargs=dict(block_size=1, n_block_overlap=0, guarantee="n_tiles")
+
+        for i, (itile,is_src,is_dst) in enumerate(tile_iterator_1d(x, axis=0,
+                                                                   n_tiles=n_tiles[0], **kwargs)):
+            for j, (tile,s_src,s_dst) in enumerate(tile_iterator_1d(itile, axis=1,
+                                                                    n_tiles=n_tiles[1], **kwargs)):
+                x_sub = tile[::sub,::sub]
+                if ignore_val is not None:
+                    x_sub = x_sub[x_sub!=ignore_val]
+                    x_sub = np.array(0) if len(x_sub)==0 else x_sub
+                mi[i,j], ma[i,j] = np.percentile(x_sub,(pmin,pmax)).astype(x.dtype)
+
+        interpolations = {0:cv2.INTER_NEAREST,
+                          1:cv2.INTER_LINEAR}
+
+        mi = cv2.resize(mi, x.shape[::-1], interpolation=interpolations[order])
+        ma = cv2.resize(ma, x.shape[::-1], interpolation=interpolations[order])
+
+    x = x.astype(np.float32)
+    x -= mi
+    x *= (dst_range[1]-dst_range[0])
+    x /= ma-mi+1e-20
+    x = x[out_slice]
+    
+    x += dst_range[0]
+    
+    if clip:
+        x = np.clip(x,*dst_range)
+    return x
