@@ -148,7 +148,7 @@ def points_bipartite_matching(p1, p2, cutoff_distance = 5):
     res.tp = len(i)
     res.fp = len(p2)-res.tp
     res.fn = len(p1)-res.tp
-    res.accuracy = res.tp/(res.tp+res.fp+res.fn)
+    res.accuracy = res.tp/(res.tp+res.fp+res.fn+1e-10)
     res.dist = np.sqrt(D[i,j])
     res.mean_dist = np.mean(res.dist)
 

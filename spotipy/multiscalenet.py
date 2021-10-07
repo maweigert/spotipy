@@ -75,7 +75,7 @@ def multiscale_unet(
                                    init=kernel_init,
                                    activation=activation,
                                    batch_norm=batch_norm, name=_name("multi_level_%s_no_%s" % (n, i)))(multi)
-        multi = conv_block(n_channel_out,1,1,activation=last_activation, name =_name("multi_%s" %n))(multi)
+        multi = conv_block(n_channel_out,1,1,activation=last_activation, dtype='float32', name =_name("multi_%s" %n))(multi)
 
         multiscale_layers.append(multi)
         multiscale_factors.append(pool_size**(n+1))
@@ -99,7 +99,7 @@ def multiscale_unet(
                                activation=activation,
                                batch_norm=batch_norm, name=_name("up_level_%s_no_%s" % (n, n_conv_per_depth)))(layer)
 
-    final = conv_block(n_channel_out, 1,1, activation=last_activation, name=_name("final"))(layer)
+    final = conv_block(n_channel_out, 1,1, activation=last_activation, dtype='float32', name=_name("final"))(layer)
     multiscale_factors.append(1)
     
     multiscale_layers = multiscale_layers[::-1]
@@ -173,7 +173,7 @@ def multiscale_resunet(
                              activation=activation,
                              batch_norm=batch_norm)(layer)
         
-        multi = conv_block(n_channel_out,1,1,activation=last_activation, name =_name("multi_%s" %n))(multi)
+        multi = conv_block(n_channel_out,1,1,activation=last_activation, dtype='float32', name =_name("multi_%s" %n))(multi)
         
         multiscale_layers.append(multi)
         multiscale_factors.append(pool_size**(n+1))
@@ -182,7 +182,7 @@ def multiscale_resunet(
         layer = tf.keras.layers.Concatenate()([layer, skip_layers[n]])
 
 
-    final = conv_block(n_channel_out, 1,1, activation=last_activation, name=_name("final"))(layer)
+    final = conv_block(n_channel_out, 1,1, activation=last_activation, dtype='float32', name=_name("final"))(layer)
     multiscale_factors.append(1)
     
     multiscale_layers = multiscale_layers[::-1]

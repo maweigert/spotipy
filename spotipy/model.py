@@ -23,6 +23,7 @@ from csbdeep.internals.train import RollingSequence
 from stardist.sample_patches import get_valid_inds, sample_patches
 
 from .multiscalenet import multiscale_unet, multiscale_resunet
+from .hrnet import hrnet
 from .utils import prob_to_points, points_matching, optimize_threshold, points_bipartite_matching, multiscale_decimate, voronoize_from_prob, center_pad, center_crop
 
 
@@ -164,8 +165,7 @@ class AccuracyCallback(tf.keras.callbacks.Callback):
             
         
         p_pred = tuple(self.spot_model.predict(x, verbose=False)[1] for x in X)
-        
-
+                
         ac = np.mean(tuple(points_bipartite_matching(p1,p2).accuracy for p1,p2 in zip(p_gt, p_pred)))
 
         self.accs.append(ac)
@@ -180,7 +180,7 @@ class AccuracyCallback(tf.keras.callbacks.Callback):
 
 
 class Config(CareConfig):
-    def __init__(self,axes = "YX", mode = "bce", n_channel_in = 1, unet_n_depth = 3, spot_weight = 5,  spot_weight_decay=.1 , backbone="unet", activation="relu", last_activation="sigmoid", multiscale=True, train_patch_size=(256,256), **kwargs):
+    def __init__(self,axes = "YX", mode = "bce", n_channel_in = 1, unet_n_depth = 3, spot_weight = 5,  spot_weight_decay=.1 , backbone="unet", activation="relu", last_activation="sigmoid", train_foreground_prob=.3, multiscale=True, train_patch_size=(256,256), **kwargs):
         kwargs.setdefault("train_batch_size",2)
         kwargs.setdefault("train_reduce_lr", {'factor': 0.5, 'patience': 40})
         kwargs.setdefault("n_channel_in",n_channel_in)
@@ -193,11 +193,12 @@ class Config(CareConfig):
         self.train_spot_weight = spot_weight
         self.train_patch_size = train_patch_size
         self.train_spot_weight_decay = spot_weight_decay
+        self.train_foreground_prob = train_foreground_prob
         self.multiscale = multiscale
         self.last_activation = last_activation
         self.activation = activation
 
-        assert backbone in ('unet', 'resunet')
+        assert backbone in ('unet', 'resunet', 'hrnet')
         self.backbone = backbone
         
         if mode in ("mae", "mse", "bce", "scale_sum", "focal"):
@@ -358,21 +359,26 @@ class SpotNet(CARE):
                     last_activation=self.config.last_activation
                 )
             else:
-                raise ValueError(self.backbone)
+                raise ValueError(self.config.backbone)
             
             self.multiscale_factors = scales
-            prelast_layer = model.layers[-2]
 
         else:
-            model = custom_unet((None,None,self.config.n_channel_in),
+            if self.config.backbone=='unet':
+                model = custom_unet((None,None,self.config.n_channel_in),
                            n_depth=self.config.unet_n_depth,
                            n_filter_base=self.config.unet_n_first,
                            kernel_size = (self.config.unet_kern_size,)*2,
                             activation=self.config.activation,
                            pool_size=(self.config.unet_pool,self.config.unet_pool),
-                           last_activation=self.config.last_activation
-                            )
-            prelast_layer = model.layers[-2]
+                           last_activation=self.config.last_activation)
+                
+            elif self.config.backbone=='hrnet':
+                model = hrnet((None,None,self.config.n_channel_in), n_channel_out=1)
+            else:
+                raise ValueError(self.config.backbone)
+                
+
 
         return model
 
@@ -525,11 +531,13 @@ class SpotNet(CARE):
                                 augmenter = augmenter,
                                 length = epochs*steps_per_epoch,
                                 patch_size=self.config.train_patch_size,
+                                foreground_prob=self.config.train_foreground_prob,
                                 workers=workers,
                                 batch_size=self.config.train_batch_size)
         
         _data_val = SpotNetData(validation_data[0],validation_data[1],
                                 batch_size=len(validation_data[0]), length=1,
+                                foreground_prob=self.config.train_foreground_prob,
                                 patch_size=self.config.train_patch_size
                                 )
         validation_data = _data_val[0]
