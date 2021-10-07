@@ -16,6 +16,12 @@ import networkx as nx
 from scipy.spatial.distance import cdist
 from types import SimpleNamespace
 
+def _filter_shape(points,shape):
+    """  returns all points in x that are inside shape """
+    assert points.ndim==2 and points.shape[1]==2
+    idx = np.all(np.logical_and(points >= 0, points < np.array(shape)), axis=1)
+    return points[idx]
+
 def points_to_prob(points, shape, sigma = 1.5,  mode = "max"):
     """points are in (x,y) order!"""
 
@@ -23,6 +29,8 @@ def points_to_prob(points, shape, sigma = 1.5,  mode = "max"):
     points = np.asarray(points).astype(np.int32)
     assert points.ndim==2 and points.shape[1]==2
 
+    points = _filter_shape(points, shape[::-1])
+    
     if mode == "max":
         D = cdist(points, points)
         A = D < 8*sigma+1
