@@ -6,7 +6,8 @@ from spotipy.utils import points_to_prob
 if __name__ == '__main__':
 
     
-    config = Config(axes = "YXC", n_channel_in=1, train_patch_size=(64,64))
+    config = Config(axes = "YXC", n_channel_in=1, train_patch_size=(64,64),
+                    activation='elu', last_activation="sigmoid", backbone='unet')
 
     model = SpotNet(config, name = None, basedir = None)
 

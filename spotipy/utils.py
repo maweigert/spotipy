@@ -148,7 +148,7 @@ def points_bipartite_matching(p1, p2, cutoff_distance = 5):
     res.tp = len(i)
     res.fp = len(p2)-res.tp
     res.fn = len(p1)-res.tp
-    res.accuracy = res.tp/(res.tp+res.fp+res.fn)
+    res.accuracy = res.tp/(res.tp+res.fp+res.fn+1e-10)
     res.dist = np.sqrt(D[i,j])
     res.mean_dist = np.mean(res.dist)
 
@@ -369,11 +369,12 @@ def normalize_fast2d(x, pmin=1, pmax=99.8, dst_range=(0,1.), clip = False, sub =
             
         if not all(s%b==0 for s,b in zip(x.shape, blocksize)):
             warnings.warn(f"image size {x.shape} not divisible by blocksize {blocksize}")
-            pads = tuple(s%b for b, s in zip(blocksize, x.shape))
+            pads = tuple(b-s%b for b, s in zip(blocksize, x.shape))
             out_slice = tuple(slice(0,s) for s in x.shape)
-            print('padding')
+            print(f'padding with {pads}')
             x = np.pad(x,tuple((0,p) for p in pads), mode='reflect')
-            
+
+        print(x.shape)
         n_tiles = tuple(max(1,s//b) for s,b in zip(x.shape, blocksize))
         
         print(f"normalizing_fast adaptively with {n_tiles} tiles and order {order}")        
