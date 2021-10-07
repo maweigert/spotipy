@@ -32,9 +32,8 @@ setup(
         'tifffile',
         'imageio',
         'scikit-image',
-        'numba',
         'csbdeep',
-        'opencv-python'
+        # 'opencv-python'
     ],
 
 )

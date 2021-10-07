@@ -131,7 +131,7 @@ def points_bipartite_matching(p1, p2, cutoff_distance = 5):
 
     D = cdist(p1,p2)
     i,j = linear_sum_assignment(D)
-    valid = D[i,j] <= cutoff_distance**2
+    valid = D[i,j] <= cutoff_distance
     i,j = i[valid], j[valid]
     
     res = SimpleNamespace()
