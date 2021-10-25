@@ -115,51 +115,68 @@ def points_to_label(points, shape = None, max_distance=3):
     return im
 
         
-def points_matching(p1, p2, max_distance=3, report_matches=False):
-    p1 = np.asarray(p1).astype(np.int32)
-    p2 = np.asarray(p2).astype(np.int32)
-    assert p1.ndim==2 and p1.shape[1]==2
-    assert p2.ndim==2 and p2.shape[1]==2
-    if len(p1)==0 or len(p2)==0:
-        return namedtuple("Matching",["accuracy"])(0)        
-        # raise ValueError("empty point set!")
+# def points_matching(p1, p2, max_distance=3, report_matches=False):
+#     p1 = np.asarray(p1).astype(np.int32)
+#     p2 = np.asarray(p2).astype(np.int32)
+#     assert p1.ndim==2 and p1.shape[1]==2
+#     assert p2.ndim==2 and p2.shape[1]==2
+#     if len(p1)==0 or len(p2)==0:
+#         return namedtuple("Matching",["accuracy"])(0)        
+#         # raise ValueError("empty point set!")
     
-    mi = np.minimum(np.min(p1,axis=0),np.min(p2,axis=0))
-    ma = np.maximum(np.max(p1,axis=0),np.max(p2,axis=0))
-    p1, p2 = p1-mi, p2-mi
-    shape = (ma-mi).astype(int)
-    im1 = points_to_label(p1, shape, max_distance=max_distance)
-    im2 = points_to_label(p2, shape, max_distance=max_distance)
+#     mi = np.minimum(np.min(p1,axis=0),np.min(p2,axis=0))
+#     ma = np.maximum(np.max(p1,axis=0),np.max(p2,axis=0))
+#     p1, p2 = p1-mi, p2-mi
+#     shape = (ma-mi).astype(int)
+#     im1 = points_to_label(p1, shape, max_distance=max_distance)
+#     im2 = points_to_label(p2, shape, max_distance=max_distance)
        
-    return matching(im1, im2, thresh = .001, report_matches=report_matches)
+#     return matching(im1, im2, thresh = .001, report_matches=report_matches)
 
 
-def points_bipartite_matching(p1, p2, cutoff_distance = 5):
+def points_matching(p1, p2, cutoff_distance = 5):
     """ finds matching that minimizes sum of mean squared distances"""
     
     from scipy.optimize import linear_sum_assignment
     from scipy.spatial.distance import cdist
 
-    D = cdist(p1,p2)
+    D = cdist(p1,p2, metric='sqeuclidean')
+    D[D>cutoff_distance**2] = 1e10*(1+D.max())
+    
     i,j = linear_sum_assignment(D)
-    valid = D[i,j] <= cutoff_distance
+    valid = D[i,j] <= cutoff_distance**2
     i,j = i[valid], j[valid]
     
     res = SimpleNamespace()
     
-    res.tp = len(i)
-    res.fp = len(p2)-res.tp
-    res.fn = len(p1)-res.tp
-    res.accuracy = res.tp/(res.tp+res.fp+res.fn+1e-10)
+    tp = len(i)
+    fp = len(p2)-tp
+    fn = len(p1)-tp
+    res.tp = tp
+    res.fp = fp
+    res.fn = fn
+    res.accuracy  = tp/(tp+fp+fn) if tp > 0 else 0
+    res.precision = tp/(tp+fp) if tp > 0 else 0
+    res.recall    = tp/(tp+fn) if tp > 0 else 0
+    res.f1        = (2*tp)/(2*tp+fp+fn) if tp > 0 else 0
+    
     res.dist = np.sqrt(D[i,j])
-    res.mean_dist = np.mean(res.dist)
+    res.mean_dist = np.mean(res.dist) if len(res.dist)>0 else 0
 
     res.false_negatives = tuple(set(range(len(p1))).difference(set(i)))
     res.false_positives = tuple(set(range(len(p2))).difference(set(j)))
     res.matched_pairs = tuple(zip(i,j)) 
     return res
+
     
-    
+def points_matching_dataset(p1s, p2s):
+    stats = tuple(points_matching(p1,p2) for p1,p2 in zip(p1s, p2s))
+    res = dict()
+    for k, v in vars(stats[0]).items():
+        if np.isscalar(v):
+            res[k] = np.mean([vars(s)[k] for s in stats])
+    return SimpleNamespace(**res)
+        
     
 
 def multiscale_decimate(y, decimate = (4,4), sigma = 1):
