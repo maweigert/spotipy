@@ -193,14 +193,16 @@ class AccuracyCallback(tf.keras.callbacks.Callback):
 
 
 class Config(CareConfig):
-    def __init__(self,axes = "YX", mode = "bce", n_channel_in = 1, unet_n_depth = 3, spot_weight = 5,  spot_weight_decay=.1 , backbone="unet", activation="relu", last_activation="sigmoid", train_foreground_prob=.3, multiscale=True, train_patch_size=(256,256), train_multiscale_loss_decay_exponent=2, **kwargs):
+    def __init__(self,axes = "YX", mode = "bce", n_channel_in = 1, unet_n_depth = 3, spot_weight = 5,  spot_weight_decay=.1 , backbone="unet", activation="relu", last_activation="sigmoid", fuse_heads=False, train_foreground_prob=.3, multiscale=True, train_patch_size=(256,256), train_multiscale_loss_decay_exponent=2, **kwargs):
         kwargs.setdefault("train_batch_size",2)
         kwargs.setdefault("train_reduce_lr", {'factor': 0.5, 'patience': 40})
         kwargs.setdefault("n_channel_in",n_channel_in)
         kwargs.setdefault("n_channel_out",1)
         kwargs.setdefault("unet_kern_size",3)
+        kwargs.setdefault("unet_n_filter_base",32)
         kwargs.setdefault("unet_pool",2)
         kwargs.setdefault("mode",mode)
+        print(kwargs)
         super().__init__(axes=axes, unet_n_depth=unet_n_depth,
                          allow_new_parameters=True, **kwargs)
         self.train_spot_weight = spot_weight
@@ -209,6 +211,7 @@ class Config(CareConfig):
         self.train_multiscale_loss_decay_exponent = train_multiscale_loss_decay_exponent
         self.train_foreground_prob = train_foreground_prob
         self.multiscale = multiscale
+        self.fuse_heads = fuse_heads
         self.last_activation = last_activation
         self.activation = activation
 
@@ -356,8 +359,9 @@ class SpotNet(CARE):
                 model, scales = multiscale_unet(
                     input_shape = (None,None,self.config.n_channel_in),
                     n_depth=self.config.unet_n_depth,
-                    n_filter_base=self.config.unet_n_first,
+                    n_filter_base=self.config.unet_n_filter_base,
                     kernel_size = self.config.unet_kern_size,
+                    fuse_heads=self.config.fuse_heads,
                     pool_size=self.config.unet_pool,
                     activation=self.config.activation,
                     last_activation=self.config.last_activation
@@ -366,7 +370,7 @@ class SpotNet(CARE):
                 model, scales = multiscale_resunet(
                     input_shape = (None,None,self.config.n_channel_in),
                     n_depth=self.config.unet_n_depth,
-                    n_filter_base=self.config.unet_n_first,
+                    n_filter_base=self.config.unet_n_filter_base,
                     kernel_size = self.config.unet_kern_size,
                     pool_size=self.config.unet_pool,
                     activation=self.config.activation,
@@ -377,7 +381,7 @@ class SpotNet(CARE):
                 model = hrnet(
                     input_shape = (None,None,self.config.n_channel_in),
                     n_depth=self.config.unet_n_depth,
-                    n_filter_base=self.config.unet_n_first,
+                    n_filter_base=self.config.unet_n_filter_base,
                     last_activation=self.config.last_activation,
                     batch_norm=True, 
                     multi_head=True
@@ -399,7 +403,7 @@ class SpotNet(CARE):
             if self.config.backbone=='unet':
                 model = custom_unet((None,None,self.config.n_channel_in),
                            n_depth=self.config.unet_n_depth,
-                           n_filter_base=self.config.unet_n_first,
+                           n_filter_base=self.config.unet_n_filter_base,
                            kernel_size = (self.config.unet_kern_size,)*2,
                             activation=self.config.activation,
                            pool_size=(self.config.unet_pool,self.config.unet_pool),
@@ -718,5 +722,4 @@ class SpotNet(CARE):
         
         return points_matching(points_gt[:,[1,0]], points)
     
-
 

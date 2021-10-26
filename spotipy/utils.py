@@ -141,7 +141,9 @@ def points_matching(p1, p2, cutoff_distance = 5):
     from scipy.spatial.distance import cdist
 
     D = cdist(p1,p2, metric='sqeuclidean')
-    D[D>cutoff_distance**2] = 1e10*(1+D.max())
+
+    if D.size>0:
+        D[D>cutoff_distance**2] = 1e10*(1+D.max())
     
     i,j = linear_sum_assignment(D)
     valid = D[i,j] <= cutoff_distance**2

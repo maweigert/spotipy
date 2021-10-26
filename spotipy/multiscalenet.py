@@ -11,6 +11,7 @@ def multiscale_unet(
         n_depth=3,
         n_filter_base=32,
         kernel_size=3,
+        fuse_heads=False,
         last_activation="linear",
         n_conv_per_depth=2,
         activation="relu",
@@ -99,6 +100,10 @@ def multiscale_unet(
                                activation=activation,
                                batch_norm=batch_norm, name=_name("up_level_%s_no_%s" % (n, n_conv_per_depth)))(layer)
 
+    if fuse_heads:
+        up_multiscale_layers = list(upsampling((s,s), interpolation='bilinear')(u) for s,u in zip(multiscale_factors[::-1], multiscale_layers[::-1]))
+        layer = tf.keras.layers.Concatenate()([layer]+up_multiscale_layers)
+        
     final = conv_block(n_channel_out, 1,1, activation=last_activation, dtype='float32', name=_name("final"))(layer)
     multiscale_factors.append(1)
     
