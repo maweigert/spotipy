@@ -24,7 +24,7 @@ from stardist.sample_patches import get_valid_inds, sample_patches
 from .multiscalenet import multiscale_unet, multiscale_resunet
 from .hrnet import hrnet
 from .utils import prob_to_points, points_matching, optimize_threshold, points_matching, multiscale_decimate, voronoize_from_prob, center_pad, center_crop
-from .unetplus import unetplus_model
+from .unetplus import unetplus_model, unetv2_model
 
 
 def weighted_bce_loss(extra_weight=1):
@@ -215,7 +215,7 @@ class Config(CareConfig):
         self.last_activation = last_activation
         self.activation = activation
 
-        assert backbone in ('unet', 'unetplus', 'resunet', 'hrnet' , 'hrnet2')
+        assert backbone in ('unet', 'unetv2', 'resunet', 'hrnet' , 'hrnet2')
         self.backbone = backbone
         
         if mode in ("mae", "mse", "bce", "scale_sum", "focal","dice"):
@@ -366,20 +366,23 @@ class SpotNet(CARE):
                     activation=self.config.activation,
                     last_activation=self.config.last_activation
                 )
-            if self.config.backbone=='unetplus':
-                scales = tuple(2**i for i in range(self.config.unet_n_depth+1))
-                model = unetplus_model(
+
+            elif self.config.backbone=='unetv2':
+                scales = tuple(self.config.unet_pool**i for i in range(self.config.unet_n_depth+1))
+                model = unetv2_model(
                     input_shape = (None,None,self.config.n_channel_in),
                     n_depth=self.config.unet_n_depth,
                     n_filter_base=self.config.unet_n_filter_base,
-                    kernel_size = self.config.unet_kern_size,
-                    block='conv_bottleneck',
-                    multi_heads=True,
-                    batch_norm = self.config.train_batch_norm,
-                    strides=self.config.unet_pool,
+                    kernel_size = (self.config.unet_kern_size,)*2,
+                    strides=(self.config.unet_pool,)*2,
                     activation=self.config.activation,
-                    last_activation=self.config.last_activation
-                )
+                    last_activation=self.config.last_activation,
+                    block='conv_basic',
+                    expansion=1.5, 
+                    n_blocks=2,
+                    multi_heads = self.config.multiscale,
+                    fused_heads = self.config.multiscale,
+                    batch_norm=self.config.train_batch_norm)
                 
             elif self.config.backbone=='resunet':
                 model, scales = multiscale_resunet(
@@ -392,14 +395,15 @@ class SpotNet(CARE):
                     last_activation=self.config.last_activation
                 )
             elif self.config.backbone=='hrnet':
-                scales = tuple(2**i for i in range(self.config.unet_n_depth+1))
+                assert self.config.unet_pool==2
+                scales = tuple(self.config.unet_pool**i for i in range(self.config.unet_n_depth+1))
                 model = hrnet(
                     input_shape = (None,None,self.config.n_channel_in),
                     n_depth=self.config.unet_n_depth,
                     n_filter_base=self.config.unet_n_filter_base,
                     last_activation=self.config.last_activation,
                     batch_norm=True, 
-                    multi_head=True
+                    multi_heads=True
                 )
             elif self.config.backbone=='hrnet2':
                 from .seg_hrnet import seg_hrnet
