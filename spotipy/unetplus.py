@@ -111,7 +111,7 @@ def residual_bottleneck_block(*args, **kwargs):
 
 #--------------------------------------------------------------------
 
-def unet_block(
+def unetv2_block(
         n_depth=3,
         n_filter_base=32,
         kernel_size=(3,3),
@@ -119,6 +119,7 @@ def unet_block(
         block='conv_basic', # 'conv_basic', 'conv_bottleneck,'residual_basic', 'residual_bottleneck'
         n_blocks=2,
         expansion=2,
+        multi_heads=False,
         activation="relu",
         batch_norm=False):
     """
@@ -161,7 +162,8 @@ def unet_block(
         if n<n_depth:
             # the path comming up
             x2 = pooling(strides)(x)
-            x2 = _f_level(n+1, x2)
+            heads = _f_level(n+1, x2)
+            x2 = heads[0]
             x2 = upsampling(strides)(x2)
 
             # concatenate
@@ -170,11 +172,19 @@ def unet_block(
             x = tf.keras.layers.Conv2D(int(n_filter_base * expansion ** n),
                                        (1,)*ndim,
                                        padding='same', activation=activation)(x)
-
-        return x
+            heads = [x] + heads
+        else:
+            heads = [x]
+        return heads
     
     def f(inp):
-        return _f_level(0, inp)
+        heads =  _f_level(0, inp)
+        if multi_heads:
+            heads = tuple(tf.keras.layers.Conv2D(n_filter_base,(1,)*ndim,
+                padding='same', activation=activation)(x) for x in heads)
+            return heads
+        else:
+            return heads[0]
         
     return f
 
@@ -225,7 +235,6 @@ def unetplus_block(
 
         x = block(n_filters=int(n_filter_base * expansion ** n),**block_kwargs)(inp)
 
-        
         if n<n_depth:
             # the lower part (recursive)
             x2 = pooling(strides)(x)
@@ -260,6 +269,8 @@ def unetplus_block(
     def f(inp):
         x_inter, heads =  _f_level(0, inp)
         if multi_heads:
+            heads = tuple(tf.keras.layers.Conv2D(n_filter_base,(1,)*ndim,
+                padding='same', activation=activation)(x) for x in heads)
             return heads
         else:
             return heads[0]
@@ -270,31 +281,44 @@ def unetplus_block(
 # ----------------------
 
 
-def unet_model(input_shape,
-               last_activation='linear',
-               n_classes=1,
-               n_depth=3,
-               n_filter_base=32,
-               kernel_size=(3,3),
-               strides = (2,2),
-               block='conv_basic',
-               n_blocks=2,
-               activation="relu",
-               batch_norm=False):
+def unetv2_model(input_shape,
+                 last_activation='linear',
+                 n_classes=1,
+                 n_depth=3,
+                 n_filter_base=32,
+                 kernel_size=(3,3),
+                 strides = (2,2),
+                 block='conv_basic',
+                 n_blocks=2,
+                 expansion=2, 
+                 multi_heads = False,
+                 fused_heads = False,
+                 activation="relu",
+                 batch_norm=False):
     
     inp = tf.keras.layers.Input(input_shape)
 
     x = tf.keras.layers.Conv2D(n_filter_base,(5,5), padding='same',activation=activation)(inp)
 
-    feat = unet_block(n_depth=n_depth,
-                      n_filter_base=n_filter_base,
-                      kernel_size=kernel_size,
-                      strides=strides,
-                      block=block,
-                          n_blocks=n_blocks,
-                      activation=activation)(x)
+    feat = unetv2_block(n_depth=n_depth,
+                        n_filter_base=n_filter_base,
+                        kernel_size=kernel_size,
+                        strides=strides,
+                        block=block,
+                        expansion=expansion,
+                        multi_heads=multi_heads,
+                        n_blocks=n_blocks,
+                        activation=activation)(x)
+    
 
-    out = tf.keras.layers.Conv2D(n_classes,(1,1), padding='same',activation=last_activation)(feat)
+    if multi_heads:
+        out = list(tf.keras.layers.Conv2D(n_classes,(1,1), padding='same',activation=last_activation)(f) for f in feat)
+        if fused_heads:
+            upsampled_outs = list(tf.keras.layers.UpSampling2D(tuple(s**i for s in strides), interpolation='bilinear')(x) for i,x in enumerate(out))
+            out[0] = tf.keras.layers.Concatenate()([feat[0]]+upsampled_outs[1:])
+            out[0] = tf.keras.layers.Conv2D(n_classes,(1,1), padding='same',activation=last_activation)(out[0])
+    else:
+        out = tf.keras.layers.Conv2D(n_classes,(1,1), padding='same',activation=last_activation)(feat)
 
     model = tf.keras.models.Model(inp, out)
     return model
@@ -311,6 +335,7 @@ def unetplus_model(input_shape,
                    n_blocks=2,
                    expansion=2,
                    multi_heads = False,
+                   fused_heads = False,
                    activation="relu",
                    batch_norm=False):
     
@@ -328,7 +353,15 @@ def unetplus_model(input_shape,
                           multi_heads=multi_heads,  
                           activation=activation)(x)
 
-    out = tf.keras.layers.Conv2D(n_classes,(1,1), padding='same',activation=last_activation)(feat)
+    if multi_heads:
+        out = tuple(tf.keras.layers.Conv2D(n_classes,(1,1), padding='same',activation=last_activation)(f) for f in feat)
+        if fused_heads:
+            upsampled_outs = list(tf.keras.layers.UpSampling2D(tuple(s**i for s in strides), interpolation='bilinear')(x) for i,x in enumerate(out))
+            out[0] = tf.keras.layers.Concatenate()([feat[0]]+upsampled_outs[1:])
+            out[0] = tf.keras.layers.Conv2D(n_classes,(1,1), padding='same',activation=last_activation)(out[0])
+        
+    else:
+        out = tf.keras.layers.Conv2D(n_classes,(1,1), padding='same',activation=last_activation)(feat)
 
     model = tf.keras.models.Model(inp, out)
     return model
@@ -338,32 +371,5 @@ def unetplus_model(input_shape,
 
 
 if __name__ == '__main__':
-    N = 512
 
-    def get_model(plus=False, **kwargs):
-        if plus:
-            return unetplus_model((None,None,1),'linear', **kwargs)
-        else:
-            return unet_model((None,None,1),'linear', **kwargs)
-        
-
-    import itertools
-
-    
-    np.random.seed(42)
-    x = np.zeros((64,N,N,1), np.float32)
-    x[:,N//4:3*N//4,N//4:3*N//4]=1
-    x = x+.3*np.random.uniform(0,1,x.shape)
-
-    for plus, block, batch_norm in itertools.product((False,True),('conv_basic', 'conv_bottleneck', 'res_basic'), (True,False)):
-        model = get_model(plus, block=block, batch_norm = batch_norm)
-
-        print(f'Model:  {"Unet++" if plus else "Unet":6}')
-        print(f'block:  {block:20} ')
-        print(f'batch:  {batch_norm}')
-        print(f'params: {model.count_params()/1e6:.1f} M')
-
-        model.compile(loss='mse', optimizer=tf.keras.optimizers.Adam(lr=3e-4))
-        model.fit(x,x, epochs=5, batch_size=2)
-
-    
+    model = unetv2_model((64,64,1), 'sigmoid', multi_heads=True, fused_heads=True)
