@@ -1,4 +1,3 @@
-
 import numpy as np
 import sys
 import warnings
@@ -25,7 +24,7 @@ from stardist.sample_patches import get_valid_inds, sample_patches
 from .multiscalenet import multiscale_unet, multiscale_resunet
 from .hrnet import hrnet
 from .utils import prob_to_points, points_matching, optimize_threshold, points_matching, multiscale_decimate, voronoize_from_prob, center_pad, center_crop
-
+from .unetplus import unetplus_model
 
 
 def weighted_bce_loss(extra_weight=1):
@@ -193,7 +192,7 @@ class AccuracyCallback(tf.keras.callbacks.Callback):
 
 
 class Config(CareConfig):
-    def __init__(self,axes = "YX", mode = "bce", n_channel_in = 1, unet_n_depth = 3, spot_weight = 5,  spot_weight_decay=.1 , backbone="unet", activation="relu", last_activation="sigmoid", fuse_heads=False, train_foreground_prob=.3, multiscale=True, train_patch_size=(256,256), train_multiscale_loss_decay_exponent=2, **kwargs):
+    def __init__(self,axes = "YX", mode = "bce", n_channel_in = 1, unet_n_depth = 3, spot_weight = 5,  spot_weight_decay=.1 , backbone="unet", activation="relu", last_activation="sigmoid", train_batch_norm=False, fuse_heads=False, train_foreground_prob=.3, multiscale=True, train_patch_size=(256,256), train_multiscale_loss_decay_exponent=2, **kwargs):
         kwargs.setdefault("train_batch_size",2)
         kwargs.setdefault("train_reduce_lr", {'factor': 0.5, 'patience': 40})
         kwargs.setdefault("n_channel_in",n_channel_in)
@@ -210,12 +209,13 @@ class Config(CareConfig):
         self.train_spot_weight_decay = spot_weight_decay
         self.train_multiscale_loss_decay_exponent = train_multiscale_loss_decay_exponent
         self.train_foreground_prob = train_foreground_prob
+        self.train_batch_norm      = train_batch_norm
         self.multiscale = multiscale
         self.fuse_heads = fuse_heads
         self.last_activation = last_activation
         self.activation = activation
 
-        assert backbone in ('unet', 'resunet', 'hrnet' , 'hrnet2')
+        assert backbone in ('unet', 'unetplus', 'resunet', 'hrnet' , 'hrnet2')
         self.backbone = backbone
         
         if mode in ("mae", "mse", "bce", "scale_sum", "focal","dice"):
@@ -366,6 +366,21 @@ class SpotNet(CARE):
                     activation=self.config.activation,
                     last_activation=self.config.last_activation
                 )
+            if self.config.backbone=='unetplus':
+                scales = tuple(2**i for i in range(self.config.unet_n_depth+1))
+                model = unetplus_model(
+                    input_shape = (None,None,self.config.n_channel_in),
+                    n_depth=self.config.unet_n_depth,
+                    n_filter_base=self.config.unet_n_filter_base,
+                    kernel_size = self.config.unet_kern_size,
+                    block='conv_bottleneck',
+                    multi_heads=True,
+                    batch_norm = self.config.train_batch_norm,
+                    strides=self.config.unet_pool,
+                    activation=self.config.activation,
+                    last_activation=self.config.last_activation
+                )
+                
             elif self.config.backbone=='resunet':
                 model, scales = multiscale_resunet(
                     input_shape = (None,None,self.config.n_channel_in),
