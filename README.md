@@ -3,6 +3,9 @@
 
 ### Installation 
 
+
+Install the [correct tensorflow for your CUDA version](https://www.tensorflow.org/install/source#gpu). 
+
 Clone the repo and install it 
 
 ```
