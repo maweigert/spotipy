@@ -679,7 +679,7 @@ class SpotNet(CARE):
             if callable(show_tile_progress):
                 iter_tiles = show_tile_progress(iter_tiles)
             else:
-                iter_tiles = tqdm(total = np.prod(n_tiles),
+                iter_tiles = tqdm(iter_tiles, total = np.prod(n_tiles),
                                   disable=not show_tile_progress)
 
             for tile, s_src, s_dst in iter_tiles:
