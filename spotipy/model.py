@@ -1,7 +1,8 @@
+from types import SimpleNamespace
 import numpy as np
 import sys
 import warnings
-from tqdm import tqdm 
+from tqdm.auto import tqdm 
 from collections import namedtuple
 from itertools import product
 import threading
@@ -14,16 +15,17 @@ from concurrent.futures import ThreadPoolExecutor
 from csbdeep.internals.nets import custom_unet
 from csbdeep.internals.train import ParameterDecayCallback
 from csbdeep.internals.predict import tile_iterator
-from csbdeep.utils import _raise, backend_channels_last, axes_check_and_normalize, axes_dict, load_json, save_json
+from csbdeep.utils import _raise, backend_channels_last, axes_check_and_normalize, axes_dict, load_json, save_json, normalize
 from csbdeep.utils.tf import export_SavedModel, CARETensorBoard, CARETensorBoardImage
 from csbdeep.models import BaseModel, BaseConfig, CARE
 from csbdeep.models import Config as CareConfig
 from csbdeep.internals.train import RollingSequence
 from stardist.sample_patches import get_valid_inds, sample_patches
 
+
 from .multiscalenet import multiscale_unet, multiscale_resunet
 from .hrnet import hrnet
-from .utils import prob_to_points, points_matching, optimize_threshold, points_matching, multiscale_decimate, voronoize_from_prob, center_pad, center_crop
+from .utils import prob_to_points, points_matching, optimize_threshold, points_matching, multiscale_decimate, voronoize_from_prob, center_pad, center_crop, _filter_shape, _filter_shape_idx
 from .unetplus import unetplus_model, unetv2_model
 
 
@@ -645,7 +647,8 @@ class SpotNet(CARE):
             return self.keras_model.predict(x[np.newaxis])[0,...,0]
 
     
-    def predict(self, img, prob_thresh=None, n_tiles=(1,1), subpix = False, min_distance=2, scale = None, verbose=True, show_tile_progress=False):
+    def predict(self, img, prob_thresh=None, n_tiles=(1,1), subpix = False, min_distance=2, scale = None, 
+                    verbose=True, show_tile_progress=False):
 
         if img.ndim==2:
             img = img[...,np.newaxis]
@@ -665,7 +668,7 @@ class SpotNet(CARE):
         div_by = self._axes_div_by("YXC")
         pad_shape = tuple(int(d*np.ceil(s/d)) for s,d in zip(x.shape, div_by))
         if verbose: print(f"padding to shape {pad_shape}")
-        x = center_pad(x, pad_shape, mode="constant")
+        # x = center_pad(x, pad_shape, mode="constant")
 
         if all(n<=1 for n in n_tiles):
             y = self._predict_prob(x)
@@ -679,7 +682,8 @@ class SpotNet(CARE):
             if callable(show_tile_progress):
                 iter_tiles = show_tile_progress(iter_tiles)
             else:
-                iter_tiles = tqdm(total = np.prod(n_tiles),
+                iter_tiles = tqdm(iter_tiles, 
+                                  total = np.prod(n_tiles),
                                   disable=not show_tile_progress)
 
             for tile, s_src, s_dst in iter_tiles:
@@ -696,8 +700,122 @@ class SpotNet(CARE):
         points = prob_to_points(y, prob_thresh=prob_thresh, subpix=subpix, min_distance=min_distance)
         if verbose: print(f"detected {len(points)} peaks")
         return y, points
-            
+
+
+    def predict_large(self, img, prob_thresh=None, n_tiles="auto", subpix = False, min_distance=2,  
+                    norm=(1,99.5), 
+                    verbose=True, show_tile_progress=True):
+        import zarr
+        import dask.array as da
+
+
+        if prob_thresh is None: prob_thresh = self.thresholds.prob
+        if verbose: print(f"Predicting with prob_thresh = {prob_thresh} and min_distance = {min_distance}")
+
+        if n_tiles is None:
+            n_tiles=(1,1)
+        elif n_tiles=="auto":
+            n_tiles = tuple(int(np.ceil((s/1024))) for s in img.shape[:2])
+        elif len(n_tiles)==2:
+            pass 
+        else:
+            raise ValueError(n_tiles)
+
+
+        div_by = self._axes_div_by("YXC")
         
+        if verbose: print(f'using {n_tiles} tiles')
+
+        
+        if all(n<=1 for n in n_tiles):
+            x = img 
+            if x.ndim==2:
+                x = x[...,np.newaxis]
+            pad_shape = tuple(int(d*np.ceil(s/d)) for s,d in zip(x.shape, div_by))
+            if verbose: print(f"padding to shape {pad_shape}")            
+            x = center_pad(x, pad_shape, mode="constant")
+
+            if norm is not None:
+                x = normalize(x, *norm, axis=(0,1))
+
+            y = self._predict_prob(x)
+            y = center_crop(y, img.shape[:2])
+            if verbose: print(f"peak detection with prob_thresh={prob_thresh:.2f}, subpix={subpix}, min_distance={min_distance} ...")
+            points = prob_to_points(y, prob_thresh=prob_thresh, subpix=subpix, min_distance=min_distance)
+            
+            probs = y[tuple(points.T)]
+            intens = np.squeeze(img[tuple(points.T)])
+
+        else:
+            # output array
+            x = da.array(img)
+
+
+            if x.ndim==2:
+                x = x[..., np.newaxis]
+
+            pad_shape = tuple((d-s%d)%d  for s, d in zip(x.shape, div_by)) 
+
+            if verbose: print(f'padding by {pad_shape}')
+
+            x = da.pad(x, tuple((0,p) for p in pad_shape))
+
+            if norm is not None:
+                if x.shape[-1]==1:
+                    mi = da.percentile(x.flatten()[::min(64,int(np.prod(x.shape))//16)], norm[0]).compute().astype(np.float32)[0]
+                    ma = da.percentile(x.flatten()[::min(64,int(np.prod(x.shape))//16)], norm[1]).compute().astype(np.float32)[0]
+                    if verbose: print(f'normalizing with mi = {mi:.2f} and ma ={ma:.2f}')
+                    x -= mi 
+                    x /= ma-mi+1e-10
+                else:
+                    raise NotImplementedError("normalization not yet implemented for multichannel input!")
+
+            iter_tiles = tile_iterator(x, n_tiles  = n_tiles +(1,),
+                                 block_sizes = div_by,
+                                 n_block_overlaps= (2,2,0))
+
+            if callable(show_tile_progress):
+                iter_tiles = show_tile_progress(iter_tiles)
+            else:
+                iter_tiles = tqdm(iter_tiles, 
+                                  total = np.prod(n_tiles),
+                                  disable=not show_tile_progress)
+
+            points = [] 
+            probs, intens = [],[]
+
+                
+                
+            for tile, s_src, s_dst in iter_tiles:
+                tile = tile.compute()
+
+                y_tile = self._predict_prob(tile)
+                y_tile = y_tile[s_src[:2]] 
+                points_tile = prob_to_points(y_tile, prob_thresh=prob_thresh, subpix=subpix, min_distance=min_distance)
+                probs.append(y_tile[tuple(points_tile.T)])
+                intens.append(img[tuple(points_tile.T)])
+
+
+                points_tile += np.array([s.start for s in s_dst[:2]])[np.newaxis]     
+                points.append(points_tile) 
+
+            
+            points = np.concatenate(points, 0)
+            intens = np.concatenate(intens, 0)
+            probs = np.concatenate(probs)
+
+            idx = _filter_shape_idx(points, img.shape[:2])
+            points = points[idx]
+            probs = probs[idx]
+            intens = intens[idx]
+
+
+        if verbose: print(f"detected {len(points)} peaks")   
+
+        return points, SimpleNamespace(prob=probs, vals=intens)
+
+
+
     def optimize_thresholds(self, X_val, Y_val,  verbose=1, predict_kwargs=None, optimize_kwargs=None, save_to_json=True):
         """Optimize two thresholds (probability) necessary for predicting object instances.
         Parameters

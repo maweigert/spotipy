@@ -34,6 +34,7 @@ setup(
         'scikit-image',
         'csbdeep',
         'stardist',
+        "zarr"
         # 'opencv-python'
     ],
 
