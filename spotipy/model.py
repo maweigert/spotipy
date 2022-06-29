@@ -645,7 +645,7 @@ class SpotNet(CARE):
             return self.keras_model.predict(x[np.newaxis])[0,...,0]
 
     
-    def predict(self, img, prob_thresh=None, n_tiles=(1,1), subpix = False, min_distance=2, scale = None, verbose=True):
+    def predict(self, img, prob_thresh=None, n_tiles=(1,1), subpix = False, min_distance=2, scale = None, verbose=True, show_tile_progress=False):
 
         if img.ndim==2:
             img = img[...,np.newaxis]
@@ -673,11 +673,16 @@ class SpotNet(CARE):
             # output array
             y = np.empty(x.shape[:2], np.float32)
 
-            for tile, s_src, s_dst in tqdm(tile_iterator(x,
-                                                      n_tiles  = n_tiles +(1,),
-                                                      block_sizes = div_by,
-                                                      n_block_overlaps= (2,2,0)),
-                                        total = np.prod(n_tiles)):
+            iter_tiles = tile_iterator(x, n_tiles  = n_tiles +(1,),
+                                 block_sizes = div_by,
+                                 n_block_overlaps= (2,2,0))
+            if callable(show_tile_progress):
+                iter_tiles = show_tile_progress(iter_tiles)
+            else:
+                iter_tiles = tqdm(iter_tiles, total = np.prod(n_tiles),
+                                  disable=not show_tile_progress)
+
+            for tile, s_src, s_dst in iter_tiles:
                 y_tile = self._predict_prob(tile)
                 y[s_dst[:2]] = y_tile[s_src[:2]] 
 

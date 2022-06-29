@@ -9,7 +9,7 @@ from scipy.optimize import minimize_scalar
 from skimage.measure import regionprops, label
 from skimage.feature import corner_peaks, corner_subpix
 from stardist.matching import matching
-from skimage.draw import circle
+from skimage.draw import disk
 from collections import namedtuple
 from tqdm import tqdm
 import networkx as nx
@@ -110,7 +110,7 @@ def points_to_label(points, shape = None, max_distance=3):
     im = np.zeros(shape, np.uint16)
     
     for i,p in enumerate(points):
-        rr,cc = circle(*p,max_distance, shape = shape)
+        rr,cc = disk(*p,max_distance, shape = shape)
         im[rr,cc] = i+1
     return im
 

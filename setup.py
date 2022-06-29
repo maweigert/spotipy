@@ -33,6 +33,7 @@ setup(
         'imageio',
         'scikit-image',
         'csbdeep',
+        'stardist',
         # 'opencv-python'
     ],
 
