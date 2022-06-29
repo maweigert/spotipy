@@ -241,7 +241,7 @@ def optimize_threshold(Y, Yhat, model, measure='accuracy', bracket=None, tol=1e-
 
                 # value = np.mean(tuple(points_matching(p1,p2)._asdict()[measure] for p1,p2 in zip(p_gt, p_pred)))
 
-                value = np.mean(tuple(vars(points_bipartite_matching(p1,p2))[measure] for p1,p2 in zip(p_gt, p_pred)))
+                value = np.mean(tuple(vars(points_matching(p1,p2))[measure] for p1,p2 in zip(p_gt, p_pred)))
 
                 values[prob_thresh]=value
             if verbose > 1:
