@@ -667,14 +667,16 @@ class SpotNet(CARE):
         pool_div_by = self.config.unet_pool**self.config.unet_n_depth
         return tuple((pool_div_by if a in 'XYZT' else 1) for a in query_axes)
 
-    def _predict_prob(self, x):
+    def _predict_prob(self, x, **kwargs):
         if self.config.multiscale:
-            return self.keras_model.predict(x[np.newaxis])[0][0,...,0]
+            return self.keras_model.predict(x[np.newaxis], **kwargs)[0][0,...,0]
         else:
-            return self.keras_model.predict(x[np.newaxis])[0,...,0]
+            return self.keras_model.predict(x[np.newaxis], **kwargs)[0,...,0]
 
     
-    def predict(self, img, prob_thresh=None, n_tiles=(1,1), subpix = False, min_distance=2, scale = None, verbose=True, show_tile_progress=False):
+    def predict(self, img, prob_thresh=None, n_tiles=(1,1), subpix = False, min_distance=2, scale = None, 
+                    normalizer=None,
+                    verbose=True, show_tile_progress=False):
 
         if img.ndim==2:
             img = img[...,np.newaxis]
@@ -712,7 +714,9 @@ class SpotNet(CARE):
                                   disable=not show_tile_progress)
 
             for tile, s_src, s_dst in iter_tiles:
-                y_tile = self._predict_prob(tile)
+                if callable(normalizer):
+                    tile = normalizer(tile)
+                y_tile = self._predict_prob(tile, verbose=False)
                 y[s_dst[:2]] = y_tile[s_src[:2]] 
 
         if scale is not None:
