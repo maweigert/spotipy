@@ -192,7 +192,7 @@ class AccuracyCallback(tf.keras.callbacks.Callback):
 
 
 class Config(CareConfig):
-    def __init__(self,axes = "YX", mode = "bce", n_channel_in = 1, unet_n_depth = 3, spot_weight = 5,  spot_weight_decay=.1 , backbone="unet", activation="relu", last_activation="sigmoid", train_batch_norm=False, fuse_heads=False, train_foreground_prob=.3, multiscale=True, train_patch_size=(256,256), train_multiscale_loss_decay_exponent=2, **kwargs):
+    def __init__(self,axes = "YX", mode = "bce", n_channel_in = 1, remove_bkg = False, unet_n_depth = 3, spot_weight = 5,  spot_weight_decay=.1 , backbone="unet", activation="relu", last_activation="sigmoid", train_batch_norm=False, fuse_heads=False, train_foreground_prob=.3, multiscale=True, train_patch_size=(256,256), train_multiscale_loss_decay_exponent=2, **kwargs):
         kwargs.setdefault("train_batch_size",2)
         kwargs.setdefault("train_reduce_lr", {'factor': 0.5, 'patience': 40})
         kwargs.setdefault("n_channel_in",n_channel_in)
@@ -201,7 +201,6 @@ class Config(CareConfig):
         kwargs.setdefault("unet_n_filter_base",32)
         kwargs.setdefault("unet_pool",2)
         kwargs.setdefault("mode",mode)
-        print(kwargs)
         super().__init__(axes=axes, unet_n_depth=unet_n_depth,
                          allow_new_parameters=True, **kwargs)
         self.train_spot_weight = spot_weight
@@ -214,6 +213,7 @@ class Config(CareConfig):
         self.fuse_heads = fuse_heads
         self.last_activation = last_activation
         self.activation = activation
+        self.remove_bkg = remove_bkg
 
         assert backbone in ('unet', 'unetv2', 'resunet', 'hrnet' , 'hrnet2')
         self.backbone = backbone
@@ -320,7 +320,31 @@ class SpotNetData(RollingSequence):
 
         return X,Y
 
-    
+
+
+class RemoveBackground(tf.keras.layers.Layer):
+    def __init__(self, n_channels=1, radius=51):
+        super().__init__()
+
+        assert n_channels==1
+        assert radius%2==1
+
+        self.half_radius = int(radius)//2
+
+        h = np.exp(-np.linspace(-2,2,2*self.half_radius+1)**2).astype(np.float32)
+        h /= np.sum(h)
+        wy = h.reshape((1, len(h),1,1))
+        wx = h.reshape((len(h),1, 1,1))
+        self.wy = tf.Variable(initial_value=tf.convert_to_tensor(wy), trainable=False, name='remove_bkg_y')
+        self.wx = tf.Variable(initial_value=tf.convert_to_tensor(wx), trainable=False, name='remove_bkg_x')
+
+    def call(self, x):
+        y = tf.pad(x, [[0,0], [self.half_radius,self.half_radius], [self.half_radius,self.half_radius], [0,0]], mode='REFLECT')
+        y = tf.nn.conv2d(y, self.wy, strides=[1, 1, 1, 1], padding='VALID')
+        y = tf.nn.conv2d(y, self.wx, strides=[1, 1, 1, 1], padding='VALID')
+        x = x - y
+        return x
+
 class SpotNet(CARE):
 
     def __init__(self, config, name=None, basedir='.'):
@@ -433,6 +457,11 @@ class SpotNet(CARE):
             else:
                 raise ValueError(self.config.backbone)
                 
+        if self.config.remove_bkg:
+            inp = tf.keras.layers.Input((None,None, self.config.n_channel_in))
+            x = RemoveBackground(radius=51)(inp)
+            out = model(x)
+            model = tf.keras.models.Model(inp, out)
 
 
         return model
@@ -553,8 +582,8 @@ class SpotNet(CARE):
             See `Keras training history <https://keras.io/models/model/#fit>`_.
         """
 
-        assert Y.ndim == 3
-        assert X.ndim == (3 if self.config.n_channel_in==1 else 4)
+        assert Y[0].ndim == 2
+        assert X[0].ndim == (2 if self.config.n_channel_in==1 else 3)
 
             
         ((isinstance(validation_data,(list,tuple)) and len(validation_data)==2)
@@ -564,11 +593,11 @@ class SpotNet(CARE):
             axes = self.config.axes.replace('C','')
         else:
             axes = self.config.axes
-        axes = axes_check_and_normalize('S'+axes,X.ndim)
+        axes = axes_check_and_normalize('S'+axes,X[0].ndim+1)
         ax = axes_dict(axes)
 
         for a,div_by in zip(axes,self._axes_div_by(axes)):
-            n = X.shape[ax[a]]
+            n = X[0].shape[ax[a]-1]
             if n % div_by != 0:
                 raise ValueError(
                     "training images must be evenly divisible by %d along axis %s"
