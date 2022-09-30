@@ -171,12 +171,12 @@ def points_matching(p1, p2, cutoff_distance = 5):
     return res
 
     
-def points_matching_dataset(p1s, p2s, by_image=True):
+def points_matching_dataset(p1s, p2s, cutoff_distance=5, by_image=True):
     """ 
     by_image is True -> metrics are computed by image and then averaged
     by_image is True -> TP/FP/FN are aggregated and only then are metrics computed
     """
-    stats = tuple(points_matching(p1,p2) for p1,p2 in zip(p1s, p2s))
+    stats = tuple(points_matching(p1,p2,cutoff_distance=cutoff_distance) for p1,p2 in zip(p1s, p2s))
 
 
     if by_image:
