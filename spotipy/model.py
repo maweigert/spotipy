@@ -23,7 +23,7 @@ from stardist.sample_patches import get_valid_inds, sample_patches
 
 from .multiscalenet import multiscale_unet, multiscale_resunet
 from .hrnet import hrnet
-from .utils import prob_to_points, points_matching, optimize_threshold, points_matching, multiscale_decimate, voronoize_from_prob, center_pad, center_crop
+from .utils import _filter_shape, prob_to_points, points_matching, optimize_threshold, points_matching, multiscale_decimate, voronoize_from_prob, center_pad, center_crop
 from .unetplus import unetplus_model, unetv2_model
 
 
@@ -621,7 +621,7 @@ class SpotNet(CARE):
                                 batch_size=self.config.train_batch_size)
         
         _data_val = SpotNetData(validation_data[0],validation_data[1],
-                                batch_size=len(validation_data[0]), length=1,
+                                batch_size=min(16,len(validation_data[0])), length=1,
                                 foreground_prob=self.config.train_foreground_prob,
                                 patch_size=self.config.train_patch_size
                                 )
@@ -700,9 +700,18 @@ class SpotNet(CARE):
 
         if all(n<=1 for n in n_tiles):
             y = self._predict_prob(x)
+            if scale is not None:
+                print('zooming')
+                y = zoom(y, (1./scale,1./scale), order=1)
+                    
+            y = center_crop(y, img.shape[:2])
+            if verbose: print(f"peak detection with prob_thresh={prob_thresh:.2f}, subpix={subpix}, min_distance={min_distance} ...")
+            points = prob_to_points(y, prob_thresh=prob_thresh, subpix=subpix, min_distance=min_distance)
+                        
         else:
             # output array
             y = np.empty(x.shape[:2], np.float32)
+            points = [] 
 
             iter_tiles = tile_iterator(x, n_tiles  = n_tiles +(1,),
                                  block_sizes = div_by,
@@ -717,17 +726,24 @@ class SpotNet(CARE):
                 if callable(normalizer):
                     tile = normalizer(tile)
                 y_tile = self._predict_prob(tile, verbose=False)
-                y[s_dst[:2]] = y_tile[s_src[:2]] 
+                y_tile_sub = y_tile[s_src[:2]] 
+                y[s_dst[:2]] = y_tile_sub
 
-        if scale is not None:
-            y = zoom(y, (1./scale,1./scale), order=1)
-                
-        y = center_crop(y, img.shape[:2])
-        if verbose: print(f"cropping to shape {img.shape}")
+                p = prob_to_points(y_tile_sub, prob_thresh=prob_thresh, subpix=subpix, min_distance=min_distance)
+                p += np.array([s.start for s in s_dst[:2]])[None]
+                points.append(p) 
 
-        if verbose: print(f"peak detection with prob_thresh={prob_thresh:.2f}, subpix={subpix}, min_distance={min_distance} ...")
-        points = prob_to_points(y, prob_thresh=prob_thresh, subpix=subpix, min_distance=min_distance)
-        if verbose: print(f"detected {len(points)} peaks")
+            if scale is not None:
+                print('zooming')
+                y = zoom(y, (1./scale,1./scale), order=1)
+            
+            y = center_crop(y, img.shape[:2])
+
+            points = np.concatenate(points, axis=0)
+            points = _filter_shape(points, y.shape)
+        
+        if verbose: print(f"detected {len(points)} points")
+
         return y, points
             
         

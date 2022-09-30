@@ -171,13 +171,37 @@ def points_matching(p1, p2, cutoff_distance = 5):
     return res
 
     
-def points_matching_dataset(p1s, p2s):
+def points_matching_dataset(p1s, p2s, by_image=True):
+    """ 
+    by_image is True -> metrics are computed by image and then averaged
+    by_image is True -> TP/FP/FN are aggregated and only then are metrics computed
+    """
     stats = tuple(points_matching(p1,p2) for p1,p2 in zip(p1s, p2s))
-    res = dict()
-    for k, v in vars(stats[0]).items():
-        if np.isscalar(v):
-            res[k] = np.mean([vars(s)[k] for s in stats])
-    return SimpleNamespace(**res)
+
+
+    if by_image:
+        res = dict()
+        for k, v in vars(stats[0]).items():
+            if np.isscalar(v):
+                res[k] = np.mean([vars(s)[k] for s in stats])
+        return SimpleNamespace(**res)
+    else:
+        res = SimpleNamespace()
+        res.tp = 0 
+        res.fp = 0 
+        res.fn = 0 
+
+
+        for s in stats: 
+            for k in ('tp','fp', 'fn'):
+                setattr(res,k, getattr(res,k) + getattr(s, k))
+
+        res.accuracy  = res.tp/(res.tp+res.fp+res.fn) if res.tp > 0 else 0
+        res.precision = res.tp/(res.tp+res.fp) if res.tp > 0 else 0
+        res.recall    = res.tp/(res.tp+res.fn) if res.tp > 0 else 0
+        res.f1        = (2*res.tp)/(2*res.tp+res.fp+res.fn) if res.tp > 0 else 0
+
+        return res
         
     
 
