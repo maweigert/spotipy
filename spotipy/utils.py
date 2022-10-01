@@ -15,6 +15,28 @@ from tqdm import tqdm
 import networkx as nx
 from scipy.spatial.distance import cdist
 from types import SimpleNamespace
+import pandas as pd
+
+
+def read_coords_csv(fname: str): 
+    """ parses a csv file and returns correctly ordered points array     
+    """
+    df = pd.read_csv(fname)
+    df = df.rename(columns = str.lower)
+    cols = set(df.columns)
+
+    col_candidates = (('axis-0', 'axis-1'), ('y','x'))
+    points = None 
+    for possible_columns in col_candidates:
+        if cols.issuperset(set(possible_columns)):
+            points = df[list(possible_columns)].to_numpy()
+            break 
+
+    if points is None: 
+        raise ValueError(f'could not get points from csv file {fname}')
+
+    return points
+
 
 def _filter_shape(points,shape):
     """  returns all points in x that are inside shape """
