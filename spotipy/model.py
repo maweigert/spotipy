@@ -5,6 +5,7 @@ from tqdm import tqdm
 from collections import namedtuple
 from itertools import product
 import threading
+import tensorflow as tf
 from scipy.ndimage import zoom
 from scipy.ndimage.filters import maximum_filter
 from functools import lru_cache
@@ -34,7 +35,7 @@ def weighted_bce_loss(extra_weight=1):
         # mask = tf.keras.backend.maximum(mask_true, mask_pred)
         mask = tf.keras.backend.cast(y_true>0.001, tf.keras.backend.floatx())
         loss = (1+extra_weight*mask)*tf.keras.backend.binary_crossentropy(y_true, y_pred)
-        return loss        
+        return loss
     return _loss
 
 def focal_loss(extra_weight=1, gamma=2):
@@ -173,8 +174,8 @@ class AccuracyCallback(tf.keras.callbacks.Callback):
             p_gt = tuple(prob_to_points(y[...,0], prob_thresh=0.95, min_distance=0) for y in Y)
             
         
-        p_pred = tuple(self.spot_model.predict(x, verbose=False)[1] for x in X)
-
+        p_prob, p_pred = tuple(zip(*tuple(self.spot_model.predict(x, verbose=False) for x in X)))
+        
         stats = tuple(points_matching(p1,p2) for p1,p2 in zip(p_gt, p_pred) if len(p_gt)>0)
         
         ac = np.mean(tuple(s.accuracy for s in stats))
@@ -182,13 +183,17 @@ class AccuracyCallback(tf.keras.callbacks.Callback):
 
         self.accs.append(ac)
 
+        spot_prob = np.concatenate(tuple(p2[tuple(p1.T)] for p1, p2 in zip(p_gt, p_prob)), axis=0)
+        spot_prob = spot_prob.mean()
+
         print(p_pred[0].shape)
-        print(f"val_accuracy : {ac:.3f}  val_f1 : {f1:.3f}  ")
+        print(f"VALIDATION: val_acc : {ac:.3f}  val_f1 : {f1:.3f}  val_spot_prob : {spot_prob:.3f} ")
 
             
         if self.tb_callback is not None:
             with self.tb_callback._writers["val"].as_default():
                 tf.summary.scalar('val_accuracy', ac, step=epoch)
+                tf.summary.scalar('val_spot_prob', spot_prob, step=epoch)
 
 
 class Config(CareConfig):
@@ -241,7 +246,7 @@ class SpotNetData(RollingSequence):
 
         assert len(X)==len(Y)
         assert all(tuple(x.shape[:2]==y.shape for x,y in zip(X,Y)))
-        assert len(X)>=batch_size
+        # assert len(X)>=batch_size
         
         if x_ndim == nD:
             self.n_channel = None
@@ -523,7 +528,7 @@ class SpotNet(CARE):
             loss = [dice_loss]
         else:
             raise ValueError(self.config.mode)
-        
+
         loss_weights = [1]
         
         if self.config.multiscale:
@@ -535,6 +540,7 @@ class SpotNet(CARE):
         print("loss_weights ", loss_weights)
         self.keras_model.compile(optimizer, loss=loss, loss_weights = loss_weights)
 
+                    
         self.callbacks = []
 
         self.callbacks.append(ParameterDecayCallback(weight, self.config.train_spot_weight_decay, name='extra_spot_weight', verbose=True))
@@ -621,7 +627,7 @@ class SpotNet(CARE):
                                 batch_size=self.config.train_batch_size)
         
         _data_val = SpotNetData(validation_data[0],validation_data[1],
-                                batch_size=min(16,len(validation_data[0])), length=1,
+                                batch_size=max(16,len(validation_data[0])), length=1,
                                 foreground_prob=self.config.train_foreground_prob,
                                 patch_size=self.config.train_patch_size
                                 )
@@ -699,7 +705,7 @@ class SpotNet(CARE):
         x = center_pad(x, pad_shape, mode="constant")
 
         if all(n<=1 for n in n_tiles):
-            y = self._predict_prob(x)
+            y = self._predict_prob(x, verbose=verbose)
             if scale is not None:
                 print('zooming')
                 y = zoom(y, (1./scale,1./scale), order=1)
