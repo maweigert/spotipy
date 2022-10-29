@@ -22,7 +22,7 @@ from csbdeep.models import Config as CareConfig
 from csbdeep.internals.train import RollingSequence
 from stardist.sample_patches import get_valid_inds, sample_patches
 
-from .multiscalenet import multiscale_unet, multiscale_resunet, fpn_resnet
+from .multiscalenet import multiscale_unet, multiscale_resunet, vanilla_fpnnet
 from .hrnet import hrnet
 from .utils import _filter_shape, prob_to_points, points_matching, optimize_threshold, points_matching, multiscale_decimate, voronoize_from_prob, center_pad, center_crop
 from .unetplus import unetplus_model, unetv2_model
@@ -220,7 +220,7 @@ class Config(CareConfig):
         self.activation = activation
         self.remove_bkg = remove_bkg
 
-        assert backbone in ('unet', 'unetv2', 'resunet', 'hrnet' , 'hrnet2', 'resnetfpn')
+        assert backbone in ('unet', 'unetv2', 'resunet', 'hrnet' , 'hrnet2', 'vanilla_fpnnet')
         self.backbone = backbone
         
         if mode in ("mae", "mse", "bce", "scale_sum", "focal","dice"):
@@ -384,16 +384,16 @@ class SpotNet(CARE):
     def _build(self):
         
         if self.config.multiscale:
-            if self.config.backbone=='resnetfpn':
-                model, scales = fpn_resnet(
+            if self.config.backbone=='vanilla_fpnnet':
+                model, scales = vanilla_fpnnet(
                     input_shape=(None,None,self.config.n_channel_in),
                     n_channel_out=1,
-                    n_depth=self.config.unet_n_depth+1,
+                    n_depth=self.config.unet_n_depth,
                     n_filter_base=self.config.unet_n_filter_base,
                     kernel_size = self.config.unet_kern_size,
                     pool_size=self.config.unet_pool,
                     activation=self.config.activation,
-                    last_activation=self.config.last_activation,
+                    last_activation=self.config.last_activation
                 )
             elif self.config.backbone=='unet':
                 model, scales = multiscale_unet(
