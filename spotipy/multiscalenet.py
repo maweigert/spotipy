@@ -1,9 +1,73 @@
-
-import numpy as np
 from csbdeep.internals.blocks import conv_block2, resnet_block
-from csbdeep.utils import _raise, backend_channels_last, axes_check_and_normalize, axes_dict, load_json, save_json
+from csbdeep.utils import backend_channels_last
 import tensorflow as tf
+from typing import Tuple
 
+
+def fpn_resnet(
+    input_shape: Tuple[int, int],
+    n_channel_out: int=1,
+    n_depth: int=3,
+    n_filter_base: int=32,
+    kernel_size: int=3,
+    last_activation: str="lineaer",
+    n_conv_per_depth: int=2,
+    activation: str="relu",
+    batch_norm: bool=False,
+    pool_size: int=2,
+    kernel_init: str="he_normal",
+    prefix: str=""
+):
+    if last_activation is None:
+        last_activation = activation
+
+    def _name(s):
+        return prefix+s
+
+    feature_maps = []
+
+    inp = tf.keras.layers.Input(input_shape)
+    layer = inp
+
+    # Encoder
+    for n in range(n_depth):
+        layer = resnet_block(n_filter_base * 2**n,
+                             (kernel_size,)*2,
+                             n_conv_per_block=n_conv_per_depth,
+                             activation=activation,
+                             batch_norm=batch_norm,
+                             kernel_initializer=kernel_init,
+                            )(layer)
+        feature_maps.append(layer)
+
+    # FPN module
+
+    fpn_outputs = [None]*len(feature_maps)
+
+    fpn_outputs[-1] = conv_block2(
+        n_channel_out,
+        1,1,
+        name=_name(f"fpn_lv{n_depth}"),
+        activation="linear",
+        init=kernel_init,
+    )(feature_maps[-1])
+    upsampled = [None]*len(feature_maps)
+    for lv in reversed(range(0, len(feature_maps)-1)):
+        # Upsample previous FPN output
+        upsampled = tf.keras.layers.UpSampling2D((pool_size,)*2, interpolation="bilinear")(fpn_outputs[lv+1])
+        # Upsampled + 1x1 conv
+        fpn_outputs[lv] = upsampled + conv_block2(
+            n_channel_out,
+            1, 1,
+            activation="linear",
+            name=_name(f"fpn_lv{lv}"),
+            init=kernel_init,
+        )(feature_maps[lv])
+    if last_activation == "sigmoid":
+        fpn_outputs = [tf.keras.activations.sigmoid(f) for f in fpn_outputs]
+    elif last_activation != "linear":
+        raise NotImplementedError("Only sigmoid and linear activations in the output FPN feature maps are currently supported.")
+    return tf.keras.models.Model(inp, fpn_outputs), tuple([pool_size**n for n in range(n_depth)])
 
 def multiscale_unet(
         input_shape,
@@ -109,7 +173,6 @@ def multiscale_unet(
     
     multiscale_layers = multiscale_layers[::-1]
     multiscale_factors = multiscale_factors[::-1]
-    
     return tf.keras.models.Model(inp, [final]+multiscale_layers), tuple(multiscale_factors)
 
 
