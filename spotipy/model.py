@@ -29,11 +29,14 @@ from .unetplus import unetplus_model, unetv2_model
 
 
 def weighted_bce_loss(extra_weight=1):
+    thr = 0.01
     def _loss(y_true,y_pred):
         # mask_true = tf.keras.backend.cast(y_true>0.01, tf.keras.backend.floatx())
         # mask_pred = tf.keras.backend.cast(y_pred>0.1, tf.keras.backend.floatx())
         # mask = tf.keras.backend.maximum(mask_true, mask_pred)
-        mask = tf.keras.backend.cast(y_true>0.001, tf.keras.backend.floatx())
+        mask_gt   = tf.keras.backend.cast(y_true>=thr, tf.keras.backend.floatx())
+        mask_pred = tf.keras.backend.cast(y_true>=thr, tf.keras.backend.floatx())
+        mask = tf.math.maximum(mask_gt , mask_pred)
         loss = (1+extra_weight*mask)*tf.keras.backend.binary_crossentropy(y_true, y_pred)
         return loss
     return _loss
