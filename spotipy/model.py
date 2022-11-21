@@ -24,7 +24,7 @@ from stardist.sample_patches import get_valid_inds, sample_patches
 
 from .multiscalenet import multiscale_unet, multiscale_resunet
 from .hrnet import hrnet
-from .utils import _filter_shape, prob_to_points, points_matching, optimize_threshold, points_matching, multiscale_decimate, voronoize_from_prob, center_pad, center_crop
+from .utils import _filter_shape, prob_to_points, points_to_prob, points_matching, optimize_threshold, points_matching, multiscale_decimate, voronoize_from_prob, center_pad, center_crop
 from .unetplus import unetplus_model, unetv2_model
 
 
@@ -200,7 +200,7 @@ class AccuracyCallback(tf.keras.callbacks.Callback):
 
 
 class Config(CareConfig):
-    def __init__(self,axes = "YX", mode = "bce", n_channel_in = 1, remove_bkg = False, unet_n_depth = 3, spot_weight = 5,  spot_weight_decay=.1 , backbone="unet", activation="relu", last_activation="sigmoid", train_batch_norm=False, fuse_heads=False, train_foreground_prob=.3, multiscale=True, train_patch_size=(256,256), train_multiscale_loss_decay_exponent=2, **kwargs):
+    def __init__(self,axes = "YX", mode = "bce", n_channel_in = 1, remove_bkg = False, spot_sigma=1.5, unet_n_depth = 3, spot_weight = 5,  spot_weight_decay=.1 , backbone="unet", activation="relu", last_activation="sigmoid", train_batch_norm=False, fuse_heads=False, train_foreground_prob=.3, multiscale=True, train_patch_size=(256,256), train_multiscale_loss_decay_exponent=2, **kwargs):
         kwargs.setdefault("train_batch_size",2)
         kwargs.setdefault("train_reduce_lr", {'factor': 0.5, 'patience': 40})
         kwargs.setdefault("n_channel_in",n_channel_in)
@@ -212,6 +212,7 @@ class Config(CareConfig):
         super().__init__(axes=axes, unet_n_depth=unet_n_depth,
                          allow_new_parameters=True, **kwargs)
         self.train_spot_weight = spot_weight
+        self.train_spot_sigma = spot_sigma
         self.train_patch_size = train_patch_size
         self.train_spot_weight_decay = spot_weight_decay
         self.train_multiscale_loss_decay_exponent = train_multiscale_loss_decay_exponent
@@ -230,8 +231,6 @@ class Config(CareConfig):
             self.mode = mode
         else:
             raise ValueError(mode)
-
-
 
 
 class SpotNetData(RollingSequence):
@@ -569,16 +568,16 @@ class SpotNet(CARE):
 
         self._model_prepared = True
 
-    def train(self, X,Y, validation_data, augmenter = None, epochs=None, steps_per_epoch=None, workers=1):
+    def train(self, X, P, validation_data, augmenter = None, epochs=None, steps_per_epoch=None, workers=1):
         """Train the neural network with the given data.
         Parameters
         ----------
         X : :class:`numpy.ndarray`
             Array of source images.
-        Y : :class:`numpy.ndarray`
-            Array of target images.
+        P : :class:`numpy.ndarray`
+            Array of target coordinates.
         validation_data : tuple(:class:`numpy.ndarray`, :class:`numpy.ndarray`)
-            Tuple of arrays for source and target validation images.
+            Tuple of arrays for source images and target coordinates
         augmenter : function that takes an image pair (x,y) as input 
             Tuple of arrays for source and target validation images.
         epochs : int
@@ -591,13 +590,16 @@ class SpotNet(CARE):
             See `Keras training history <https://keras.io/models/model/#fit>`_.
         """
 
-        assert Y[0].ndim == 2
-        assert X[0].ndim == (2 if self.config.n_channel_in==1 else 3)
 
-            
         ((isinstance(validation_data,(list,tuple)) and len(validation_data)==2)
             or _raise(ValueError('validation_data must be a pair of numpy arrays')))
+        Xv, Pv = validation_data 
 
+        assert X[0].ndim == (2 if self.config.n_channel_in==1 else 3)
+
+        Y = np.stack([points_to_prob(p, x.shape[:2], sigma=self.config.train_spot_sigma) for x, p in zip(X, P)], axis=0)
+        Yv = np.stack([points_to_prob(p, x.shape[:2], sigma=self.config.train_spot_sigma) for x, p in zip(Xv, Pv)], axis=0)
+        
         if self.config.n_channel_in==1:
             axes = self.config.axes.replace('C','')
         else:
@@ -629,8 +631,8 @@ class SpotNet(CARE):
                                 workers=workers,
                                 batch_size=self.config.train_batch_size)
         
-        _data_val = SpotNetData(validation_data[0],validation_data[1],
-                                batch_size=max(16,len(validation_data[0])), length=1,
+        _data_val = SpotNetData(Xv, Yv,
+                                batch_size=max(16,len(Xv)), length=1,
                                 foreground_prob=self.config.train_foreground_prob,
                                 patch_size=self.config.train_patch_size
                                 )
@@ -756,14 +758,14 @@ class SpotNet(CARE):
         return y, points
             
         
-    def optimize_thresholds(self, X_val, Y_val,  verbose=1, predict_kwargs=None, optimize_kwargs=None, save_to_json=True):
+    def optimize_thresholds(self, X_val, P_val,  verbose=1, predict_kwargs=None, optimize_kwargs=None, save_to_json=True):
         """Optimize two thresholds (probability) necessary for predicting object instances.
         Parameters
         ----------
         X_val : list of ndarray
             (Validation) input images (must be normalized) to use for threshold tuning.
-        Y_val : list of ndarray
-            (Validation) label images to use for threshold tuning.
+        P_val : list of ndarray
+            (Validation) coordinates to use for threshold tuning.
         predict_kwargs: dict
             Keyword arguments for ``predict`` function of this class.
             (If not provided, will guess value for `n_tiles` to prevent out of memory errors.)
@@ -776,15 +778,17 @@ class SpotNet(CARE):
         if optimize_kwargs is None:
             optimize_kwargs = {}
 
+        Y_val = np.stack([points_to_prob(p, x.shape[:2], sigma=self.config.train_spot_sigma) for x, p in zip(X_val, P_val)], axis=0)
+
         def _pad_dims(x):
             return (x if x.ndim==3 else np.expand_dims(x,-1))
         X_val = map(_pad_dims,X_val)
         
         Yhat_val = [self._predict_prob(x) for x in X_val]
 
+        
 
-        opt_prob_thresh, opt_measure = optimize_threshold(Y_val, Yhat_val, model=self,
-                                                          verbose=verbose, **optimize_kwargs)
+        opt_prob_thresh, opt_measure = optimize_threshold(Y_val, Yhat_val, verbose=verbose, **optimize_kwargs)
 
        
         opt_threshs = dict(prob=opt_prob_thresh)

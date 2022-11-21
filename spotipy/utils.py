@@ -1,5 +1,5 @@
 import numpy as np
-import sys
+import warnings
 import datetime
 import warnings
 from csbdeep.utils import normalize
@@ -45,13 +45,15 @@ def _filter_shape(points,shape):
     return points[idx]
 
 def points_to_prob(points, shape, sigma = 1.5,  mode = "max"):
-    """points are in (x,y) order!"""
+    """points are in (y,x) order (was x,y prior to version 0.2.0 !)"""
+
+    warnings.warn('Order of point dimensions in points_to_prob changed in 0.2.0 (was XY, is now YX)')
 
     x = np.zeros(shape, np.float32)
     points = np.asarray(points).astype(np.int32)
     assert points.ndim==2 and points.shape[1]==2
 
-    points = _filter_shape(points, shape[::-1])
+    points = _filter_shape(points, shape)
 
     if len(points)==0:
         return x 
@@ -65,7 +67,7 @@ def points_to_prob(points, shape, sigma = 1.5,  mode = "max"):
         while len(G)>0:
             inds = nx.maximal_independent_set(G)
             gauss = np.zeros(shape, np.float32)
-            gauss[tuple(points[inds].T[[1,0]])] = 1
+            gauss[tuple(points[inds].T)] = 1
             g = gaussian_filter(gauss, sigma, mode=  "constant")
             g /= np.max(g)
             x = np.maximum(x,g)
@@ -74,7 +76,7 @@ def points_to_prob(points, shape, sigma = 1.5,  mode = "max"):
     elif mode == 'sum':
         x = np.zeros(shape, np.float32)
         for px, py in points:
-            x[py, px] = 1
+            x[px, py] = 1
         x = sigma**2*2.*np.pi*gaussian_filter(x, sigma, mode=  "constant")
         
     elif mode =="dist":
@@ -83,27 +85,14 @@ def points_to_prob(points, shape, sigma = 1.5,  mode = "max"):
         from skimage.morphology import binary_dilation, disk
         y = np.zeros(shape, np.bool)
         for px, py in points:
-            y[py, px] = True
+            y[px, py] = True
         y = binary_dilation(y, disk(11))
         x = np.exp(-.4*edt(~y))
         x = zoom(x,(1/4,1/4), order=1)
     else:
         raise ValueError(mode)
         
-        
-            
     return x
-
-
-    # Y,X = np.meshgrid(*tuple(np.arange(s) for s in shape), indexing = "ij")
-
-    # cy, cx = shape[0]//2, shape[1]//2    
-    # gauss = np.exp(-((X-cx)**2+(Y-cy)**2)/sigma**2/2)
-    
-    # for px, py in points:
-    #     x = np.maximum(x,np.roll(np.roll(gauss, py-cy, axis = 0), px-cx, axis = 1))
-
-    # return x
 
 
 def prob_to_points(prob, prob_thresh=.5, min_distance = 2, subpix=False):
@@ -117,7 +106,6 @@ def prob_to_points(prob, prob_thresh=.5, min_distance = 2, subpix=False):
         corners[ind] = corners_sub[ind].round().astype(int)
         
     return corners
-
 
 def points_to_label(points, shape = None, max_distance=3):
     points = np.asarray(points).astype(np.int32)
@@ -271,7 +259,7 @@ def voronoize_from_prob(prob,prob_thresh =0.9):
     return dist_closest
 
 
-def optimize_threshold(Y, Yhat, model, measure='accuracy', bracket=None, tol=1e-4, maxiter=80, verbose=1):
+def optimize_threshold(Y, Yhat, measure='f1', bracket=(0.3, 0.7), tol=1e-4, maxiter=80, verbose=1):
     values = dict()
 
     if bracket is None:
@@ -279,7 +267,7 @@ def optimize_threshold(Y, Yhat, model, measure='accuracy', bracket=None, tol=1e-
     print("bracket =", bracket)
     values = dict()
 
-    p_gt = tuple(prob_to_points(y, prob_thresh=0.95, min_distance=0) for y in Y)
+    p_gt = tuple(prob_to_points(y, prob_thresh=0.95, min_distance=1) for y in Y)
 
     with tqdm(total=maxiter, disable=(verbose!=1)) as progress:
 

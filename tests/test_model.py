@@ -3,22 +3,27 @@ from spotipy.model import Config, SpotNetData, SpotNet
 from spotipy.utils import points_to_prob
 
 
+def dummy_data(n_samples=16):
+    X = np.random.uniform(0,1,(n_samples, 128, 128))
+    P = np.random.randint(0,128,(n_samples, 21, 2))
+    for x, p in zip(X, P):
+        x[tuple(p.T.tolist())] = np.random.uniform(2,5,len(p))
+    Y = np.stack(tuple(points_to_prob(p, (128,128)) for p in P))
+    return X, Y, P
+
 if __name__ == '__main__':
 
     
-    config = Config(axes = "YXC", n_channel_in=1, train_patch_size=(64,64),
-                    activation='elu', last_activation="sigmoid", backbone='unet')
+    config = Config(n_channel_in=1, train_patch_size=(64,64), backbone='unet', spot_sigma=1)
 
     model = SpotNet(config, name = None, basedir = None)
 
+    X,Y, P = dummy_data(128)
+    Xv,Yv, Pv = dummy_data(16)
 
-    P = np.random.randint(10,128-10,(5,30,2))
+    model.train(X,P, validation_data=[Xv, Pv], epochs=2, steps_per_epoch=128)
 
-    Y = np.stack(tuple(points_to_prob(p, shape=(128,128), sigma=1) for p in P))
-
-    X = Y + .3*np.random.normal(0,1,Y.shape)
-    
-    model.train(X,Y, validation_data=[X,Y], steps_per_epoch=100)
+    model.optimize_thresholds(Xv,Pv)
 
 
 

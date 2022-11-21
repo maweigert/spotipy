@@ -4,10 +4,14 @@ from setuptools.command.build_ext import build_ext
 from numpy.distutils.misc_util import get_numpy_include_dirs
 from os import path
 #------------------------------------------------------------------------------------
+_dir = path.dirname(__file__)
+
+with open(path.join(_dir,'spotipy','version.py'), encoding="utf-8") as f:
+    exec(f.read())
 
 setup(
     name='spotipy',
-    version='0.1.0',
+    version=__version__,
     description='spotipy',
     long_description_content_type='text/markdown',
     author='Martin Weigert',
