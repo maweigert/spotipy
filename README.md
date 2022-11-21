@@ -83,6 +83,6 @@ prob, points = model.predict(img)
 ```
 
 
-## Contributions
+## Contributors
 
 Albert Dominguez Mantes, Antonio Herrera, Irina Khven, Anjali Schläppi, Giolele La Manno, Martin Weigert
