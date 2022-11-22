@@ -25,6 +25,6 @@ if __name__ == '__main__':
 
     model.optimize_thresholds(Xv,Pv)
 
-
+    points, _ = model.predict(X[0])
 
     

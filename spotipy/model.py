@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 import numpy as np
 import sys
 import warnings
@@ -177,7 +178,7 @@ class AccuracyCallback(tf.keras.callbacks.Callback):
             p_gt = tuple(prob_to_points(y[...,0], prob_thresh=0.95, min_distance=0) for y in Y)
             
         
-        p_prob, p_pred = tuple(zip(*tuple(self.spot_model.predict(x, verbose=False) for x in X)))
+        p_pred, p_details  = tuple(zip(*tuple(self.spot_model.predict(x, verbose=False, return_prob=True) for x in X)))
         
         stats = tuple(points_matching(p1,p2) for p1,p2 in zip(p_gt, p_pred) if len(p_gt)>0)
         
@@ -186,7 +187,7 @@ class AccuracyCallback(tf.keras.callbacks.Callback):
 
         self.accs.append(ac)
 
-        spot_prob = np.concatenate(tuple(p2[tuple(p1.T)] for p1, p2 in zip(p_gt, p_prob)), axis=0)
+        spot_prob = np.concatenate(tuple(details.prob[tuple(p1.T)] for p1, details in zip(p_gt, p_details)), axis=0)
         spot_prob = spot_prob.mean()
 
         print(p_pred[0].shape)
@@ -491,8 +492,6 @@ class SpotNet(CARE):
         else:
             raise ValueError(f"unsupported dimension {y.ndim} (shape {y.shape})")
 
-        
-        
 
     def prepare_targets(self, y):
         """ from a single output (batch), generate a list of additional targets"""
@@ -593,12 +592,13 @@ class SpotNet(CARE):
 
         ((isinstance(validation_data,(list,tuple)) and len(validation_data)==2)
             or _raise(ValueError('validation_data must be a pair of numpy arrays')))
-        Xv, Pv = validation_data 
-
+        
+        assert len(X)==len(P)
         assert X[0].ndim == (2 if self.config.n_channel_in==1 else 3)
 
-        Y = np.stack([points_to_prob(p, x.shape[:2], sigma=self.config.train_spot_sigma) for x, p in zip(X, P)], axis=0)
-        Yv = np.stack([points_to_prob(p, x.shape[:2], sigma=self.config.train_spot_sigma) for x, p in zip(Xv, Pv)], axis=0)
+        Y = tuple(points_to_prob(p, x.shape[:2], sigma=self.config.train_spot_sigma) for x, p in zip(X, P))
+        Xv, Pv = validation_data 
+        Yv = tuple(points_to_prob(p, x.shape[:2], sigma=self.config.train_spot_sigma) for x, p in zip(Xv, Pv))
         
         if self.config.n_channel_in==1:
             axes = self.config.axes.replace('C','')
@@ -686,7 +686,7 @@ class SpotNet(CARE):
 
     
     def predict(self, img, prob_thresh=None, n_tiles=(1,1), subpix = False, min_distance=2, scale = None, 
-                    normalizer=None,
+                    normalizer=None, return_prob = False,
                     verbose=True, show_tile_progress=False):
 
         if img.ndim==2:
@@ -721,7 +721,9 @@ class SpotNet(CARE):
                         
         else:
             # output array
-            y = np.empty(x.shape[:2], np.float32)
+            if return_prob:
+                y = np.empty(x.shape[:2], np.float32)
+
             points = [] 
 
             iter_tiles = tile_iterator(x, n_tiles  = n_tiles +(1,),
@@ -738,24 +740,31 @@ class SpotNet(CARE):
                     tile = normalizer(tile)
                 y_tile = self._predict_prob(tile, verbose=False)
                 y_tile_sub = y_tile[s_src[:2]] 
-                y[s_dst[:2]] = y_tile_sub
+
+                if return_prob:
+                    y[s_dst[:2]] = y_tile_sub
 
                 p = prob_to_points(y_tile_sub, prob_thresh=prob_thresh, subpix=subpix, min_distance=min_distance)
                 p += np.array([s.start for s in s_dst[:2]])[None]
                 points.append(p) 
 
-            if scale is not None:
-                print('zooming')
-                y = zoom(y, (1./scale,1./scale), order=1)
-            
-            y = center_crop(y, img.shape[:2])
+            if return_prob:
+                if scale is not None:
+                    print('zooming')
+                    y = zoom(y, (1./scale,1./scale), order=1)
+                y = center_crop(y, img.shape[:2])
 
             points = np.concatenate(points, axis=0)
             points = _filter_shape(points, y.shape)
         
         if verbose: print(f"detected {len(points)} points")
 
-        return y, points
+        if return_prob:
+            details = SimpleNamespace(prob = y)
+        else: 
+            details = SimpleNamespace()
+
+        return points, details
             
         
     def optimize_thresholds(self, X_val, P_val,  verbose=1, predict_kwargs=None, optimize_kwargs=None, save_to_json=True):
