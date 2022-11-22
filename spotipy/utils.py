@@ -156,7 +156,7 @@ def points_to_label(points, shape = None, max_distance=3):
 #     return matching(im1, im2, thresh = .001, report_matches=report_matches)
 
 
-def points_matching(p1, p2, cutoff_distance = 5):
+def points_matching(p1, p2, cutoff_distance = 5, eps=1e-8):
     """ finds matching that minimizes sum of mean squared distances"""
     
     from scipy.optimize import linear_sum_assignment
@@ -183,10 +183,14 @@ def points_matching(p1, p2, cutoff_distance = 5):
     res.tp = tp
     res.fp = fp
     res.fn = fn
-    res.accuracy  = tp/(tp+fp+fn) if tp > 0 else 0
-    res.precision = tp/(tp+fp) if tp > 0 else 0
-    res.recall    = tp/(tp+fn) if tp > 0 else 0
-    res.f1        = (2*tp)/(2*tp+fp+fn) if tp > 0 else 0
+
+    # when there is no tp and we dont predict anything the accuracy should be 1 not 0
+    tp_eps = tp+eps 
+
+    res.accuracy  = tp_eps/(tp_eps+fp+fn) if tp_eps > 0 else 0
+    res.precision = tp_eps/(tp_eps+fp) if tp_eps > 0 else 0
+    res.recall    = tp_eps/(tp_eps+fn) if tp_eps > 0 else 0
+    res.f1        = (2*tp_eps)/(2*tp_eps+fp+fn) if tp_eps > 0 else 0
     
     res.dist = np.sqrt(D[i,j])
     res.mean_dist = np.mean(res.dist) if len(res.dist)>0 else 0
@@ -197,12 +201,12 @@ def points_matching(p1, p2, cutoff_distance = 5):
     return res
 
     
-def points_matching_dataset(p1s, p2s, cutoff_distance=5, by_image=True):
+def points_matching_dataset(p1s, p2s, cutoff_distance=5, by_image=True, eps=1e-8):
     """ 
     by_image is True -> metrics are computed by image and then averaged
     by_image is True -> TP/FP/FN are aggregated and only then are metrics computed
     """
-    stats = tuple(points_matching(p1,p2,cutoff_distance=cutoff_distance) for p1,p2 in zip(p1s, p2s))
+    stats = tuple(points_matching(p1,p2,cutoff_distance=cutoff_distance, eps=eps) for p1,p2 in tqdm(zip(p1s, p2s), desc=f'matching cutoff {cutoff_distance}', total=len(p1s), leave=False))
 
 
     if by_image:
@@ -222,10 +226,11 @@ def points_matching_dataset(p1s, p2s, cutoff_distance=5, by_image=True):
             for k in ('tp','fp', 'fn'):
                 setattr(res,k, getattr(res,k) + getattr(s, k))
 
-        res.accuracy  = res.tp/(res.tp+res.fp+res.fn) if res.tp > 0 else 0
-        res.precision = res.tp/(res.tp+res.fp) if res.tp > 0 else 0
-        res.recall    = res.tp/(res.tp+res.fn) if res.tp > 0 else 0
-        res.f1        = (2*res.tp)/(2*res.tp+res.fp+res.fn) if res.tp > 0 else 0
+        tp_eps = res.tp+eps
+        res.accuracy  = tp_eps/(tp_eps+res.fp+res.fn) if tp_eps>0 else 0
+        res.precision = tp_eps/(tp_eps+res.fp) if tp_eps>0 else 0
+        res.recall    = tp_eps/(tp_eps+res.fn) if tp_eps>0 else 0
+        res.f1        = (2*tp_eps)/(2*tp_eps+res.fp+res.fn) if tp_eps>0 else 0
 
         return res
         
