@@ -1,9 +1,6 @@
 from __future__ import absolute_import, print_function
-from setuptools import setup, find_packages, Extension
-from setuptools.command.build_ext import build_ext
-from numpy.distutils.misc_util import get_numpy_include_dirs
-from os import path
-#------------------------------------------------------------------------------------
+
+from setuptools import setup, find_packages
 
 setup(
     name='spotipy',
@@ -34,7 +31,6 @@ setup(
         'scikit-image',
         'csbdeep',
         'stardist',
-        # 'opencv-python'
     ],
 
 )
