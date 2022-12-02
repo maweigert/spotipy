@@ -78,17 +78,16 @@ def points_to_prob(points, shape, sigma = 1.5,  mode = "max"):
         for px, py in points:
             x[px, py] = 1
         x = sigma**2*2.*np.pi*gaussian_filter(x, sigma, mode=  "constant")
+        x = np.clip(x,0,1)
         
     elif mode =="dist":
         from edt import edt
         from scipy.ndimage import zoom
         from skimage.morphology import binary_dilation, disk
         y = np.zeros(shape, np.bool)
-        for px, py in points:
-            y[px, py] = True
-        y = binary_dilation(y, disk(11))
-        x = np.exp(-.4*edt(~y))
-        x = zoom(x,(1/4,1/4), order=1)
+        for py, px in points:
+            y[py, px] = True
+        x = np.exp(-edt(~y)**2/sigma**2/2)    
     else:
         raise ValueError(mode)
         

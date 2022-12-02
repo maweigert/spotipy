@@ -201,7 +201,7 @@ class AccuracyCallback(tf.keras.callbacks.Callback):
 
 
 class Config(CareConfig):
-    def __init__(self,axes = "YX", mode = "bce", n_channel_in = 1, remove_bkg = False, spot_sigma=1.5, unet_n_depth = 3, spot_weight = 5,  spot_weight_decay=.1 , backbone="unet", activation="relu", last_activation="sigmoid", train_batch_norm=False, fuse_heads=False, train_foreground_prob=.3, multiscale=True, train_patch_size=(256,256), train_multiscale_loss_decay_exponent=2, **kwargs):
+    def __init__(self,axes = "YX", mode = "bce", n_channel_in = 1, remove_bkg = False, spot_sigma=1.5, spot_mode='max', unet_n_depth = 3, spot_weight = 5,  spot_weight_decay=.1 , backbone="unet", activation="relu", last_activation="sigmoid", train_batch_norm=False, fuse_heads=False, train_foreground_prob=.3, multiscale=True, train_patch_size=(256,256), train_multiscale_loss_decay_exponent=2, **kwargs):
         kwargs.setdefault("train_batch_size",2)
         kwargs.setdefault("train_reduce_lr", {'factor': 0.5, 'patience': 40})
         kwargs.setdefault("n_channel_in",n_channel_in)
@@ -214,6 +214,7 @@ class Config(CareConfig):
                          allow_new_parameters=True, **kwargs)
         self.train_spot_weight = spot_weight
         self.train_spot_sigma = spot_sigma
+        self.train_spot_mode = spot_mode
         self.train_patch_size = train_patch_size
         self.train_spot_weight_decay = spot_weight_decay
         self.train_multiscale_loss_decay_exponent = train_multiscale_loss_decay_exponent
@@ -596,9 +597,9 @@ class SpotNet(CARE):
         assert len(X)==len(P)
         assert X[0].ndim == (2 if self.config.n_channel_in==1 else 3)
 
-        Y = tuple(points_to_prob(p, x.shape[:2], sigma=self.config.train_spot_sigma) for x, p in zip(X, P))
+        Y = tuple(points_to_prob(p, x.shape[:2], sigma=self.config.train_spot_sigma, mode=self.config.train_spot_mode) for x, p in zip(X, P))
         Xv, Pv = validation_data 
-        Yv = tuple(points_to_prob(p, x.shape[:2], sigma=self.config.train_spot_sigma) for x, p in zip(Xv, Pv))
+        Yv = tuple(points_to_prob(p, x.shape[:2], sigma=self.config.train_spot_sigma, mode=self.config.train_spot_mode) for x, p in zip(Xv, Pv))
         
         if self.config.n_channel_in==1:
             axes = self.config.axes.replace('C','')
