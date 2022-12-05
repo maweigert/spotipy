@@ -32,7 +32,7 @@ jobs:
   #         PLATFORM: ${{ matrix.platform }}
 
   upload-pypi:
-    needs: test
+    # needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
