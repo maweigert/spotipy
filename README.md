@@ -17,11 +17,10 @@
 Install the [correct tensorflow for your CUDA version](https://www.tensorflow.org/install/source#gpu). 
 
 
-Clone the repo and install it 
+Then Spotipy can be installed directly via `pip`:
 
 ```
-git clone git@github.com:maweigert/spotipy.git
-pip install spotipy
+pip install spotipy-detector
 ```
 
 
