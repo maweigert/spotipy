@@ -1,3 +1,9 @@
+![PyPI - Python Version](https://img.shields.io/pypi/pyversions/spotipy-detector.svg)
+![PyPI - Version](https://img.shields.io/pypi/v/spotipy-detector)
+![PyPI - License](https://img.shields.io/pypi/l/spotipy-detector)
+![PyPI - Status](https://img.shields.io/pypi/status/spotipy-detector)
+[![tests](https://github.com/maweigert/spotipy/workflows/tests/badge.svg)](https://github.com/maweigert/spotipy/actions)
+![PyPI - Downloads](https://img.shields.io/pypi/dm/spotipy-detector)
 
 ![Logo](artwork/spotipy_transp_small.png)
 
