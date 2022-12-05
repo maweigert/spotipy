@@ -19,3 +19,6 @@ htmlcov/
 *.png
 *.so
 *.tfevents.*
+
+# Version file
+spotipy/_version.py
