@@ -744,7 +744,7 @@ class SpotNet(CARE):
         if optimize_kwargs is None:
             optimize_kwargs = {}
 
-        Y_val = np.stack([points_to_prob(p, x.shape[:2], sigma=self.config.train_spot_sigma) for x, p in zip(X_val, P_val)], axis=0)
+        Y_val = [points_to_prob(p, x.shape[:2], sigma=self.config.train_spot_sigma) for x, p in zip(X_val, P_val)]
 
         def _pad_dims(x):
             return (x if x.ndim==3 else np.expand_dims(x,-1))
