@@ -25,7 +25,7 @@ from stardist.sample_patches import get_valid_inds, sample_patches
 
 from .multiscalenet import multiscale_unet, multiscale_resunet
 from .hrnet import hrnet
-from .utils import _filter_shape, prob_to_points, points_to_prob, points_matching, optimize_threshold, points_matching, multiscale_decimate, voronoize_from_prob, center_pad, center_crop
+from .utils import _filter_shape, points_to_flow, prob_to_points, points_to_prob, points_matching, optimize_threshold, points_matching, multiscale_decimate, voronoize_from_prob, center_pad, center_crop
 from .unetplus import unetplus_model, unetv2_model
 
 
@@ -237,7 +237,7 @@ class Config(CareConfig):
 
 class SpotNetData(RollingSequence):
     """ creates a generator from data"""
-    def __init__(self, X,Y, patch_size, length, batch_size=4,  augmenter = None, workers=1, sample_ind_cache=True, maxfilter_patch_size=None, foreground_prob=0):
+    def __init__(self, X,Y,F, patch_size, length, batch_size=4,  augmenter = None, workers=1, sample_ind_cache=True, maxfilter_patch_size=None, foreground_prob=0):
         """datas has to be a tuple of all input/output lists, e.g.  
         datas = (X,Y)
         """
@@ -262,7 +262,7 @@ class SpotNetData(RollingSequence):
         super().__init__(data_size=len(X),
                          batch_size=batch_size, length=length, shuffle=True)
 
-        self.X, self.Y = X, Y
+        self.X, self.Y, self.F = X, Y, F
         self.batch_size = batch_size
         self.patch_size = patch_size
         self.augmenter = augmenter
@@ -307,13 +307,17 @@ class SpotNetData(RollingSequence):
     def __getitem__(self, i):
         idx = self.batch(i)
 
-        arrays = [sample_patches((self.Y[k],) + self.channels_as_tuple(self.X[k]),
-                                 patch_size=self.patch_size, n_samples=1,
-                                 valid_inds=self.get_valid_inds(k)) for k in idx]
 
-        X,Y = list(zip(*[(x[0],y[0]) for y,x in arrays]))
+        f_as_tuples = tuple(tuple(self.F[k][...,i] for i in range(self.F[k].shape[-1])) for k in idx)
+
+        arrays = [sample_patches((self.Y[k],) + f_as_tuples[i] + self.channels_as_tuple(self.X[k]),
+                                 patch_size=self.patch_size, n_samples=1,
+                                 valid_inds=self.get_valid_inds(k)) for i,k in enumerate(idx)]
+
+        X,Y,F = list(zip(*[(x[0],y[0], np.stack((fy[0], fx[0]), axis=-1)) for y,fy,fx,x in arrays]))
 
         if self.augmenter is not None:
+            raise NotImplementedError()
             if self.workers>1:
                 with ThreadPoolExecutor(max_workers=min(self.batch_size,8)) as e:
                     X,Y = tuple(np.stack(t) for t in zip(*tuple(e.map(self.augmenter,zip(X,Y)))))
@@ -322,12 +326,13 @@ class SpotNetData(RollingSequence):
 
         X = np.stack(X)
         Y = np.stack(Y)
+        F = np.stack(F)
         
         if X.ndim == 3: # input image has no channel axis
             X = np.expand_dims(X,-1)
         Y = np.expand_dims(Y,-1)
 
-        return X,Y
+        return X,Y,F
 
 
 
@@ -536,6 +541,9 @@ class SpotNet(CARE):
         if self.config.multiscale:
             loss += [tf.keras.backend.binary_crossentropy]*(len(self.multiscale_factors)-1)
             loss_weights = list(1/np.array(self.multiscale_factors)**self.config.train_multiscale_loss_decay_exponent)
+
+            loss += [tf.keras.losses.mean_squared_error]
+            loss_weights += [10]
         else:
             loss_weights = [1]
 
@@ -598,8 +606,11 @@ class SpotNet(CARE):
         assert X[0].ndim == (2 if self.config.n_channel_in==1 else 3)
 
         Y = tuple(points_to_prob(p, x.shape[:2], sigma=self.config.train_spot_sigma, mode=self.config.train_spot_mode) for x, p in zip(X, P))
+        F = tuple(points_to_flow(p, x.shape[:2], sigma=2*self.config.train_spot_sigma) for x, p in zip(X, P))
+
         Xv, Pv = validation_data 
         Yv = tuple(points_to_prob(p, x.shape[:2], sigma=self.config.train_spot_sigma, mode=self.config.train_spot_mode) for x, p in zip(Xv, Pv))
+        Fv = tuple(points_to_flow(p, x.shape[:2], sigma=2*self.config.train_spot_sigma) for x, p in zip(Xv, Pv))
         
         if self.config.n_channel_in==1:
             axes = self.config.axes.replace('C','')
@@ -624,7 +635,7 @@ class SpotNet(CARE):
         if not self._model_prepared:
             self.prepare_for_training()
             
-        self.data = SpotNetData(X, Y,
+        self.data = SpotNetData(X, Y, F,
                                 augmenter = augmenter,
                                 length = epochs*steps_per_epoch,
                                 patch_size=self.config.train_patch_size,
@@ -632,7 +643,7 @@ class SpotNet(CARE):
                                 workers=workers,
                                 batch_size=self.config.train_batch_size)
         
-        _data_val = SpotNetData(Xv, Yv,
+        _data_val = SpotNetData(Xv, Yv, Fv,
                                 batch_size=max(16,len(Xv)), length=1,
                                 foreground_prob=self.config.train_foreground_prob,
                                 patch_size=self.config.train_patch_size
@@ -641,14 +652,15 @@ class SpotNet(CARE):
 
         if self.config.multiscale:
             validation_data = (validation_data[0],
-                               list(self.prepare_targets(validation_data[1])))
+                               list(self.prepare_targets(validation_data[1]))+[validation_data[2]])
+                               
 
             def _copy_gen(gen):
-                for x, y in gen:
-                    yield x , list(self.prepare_targets(y))        
+                for x, y, f in gen:
+                    yield x , list(self.prepare_targets(y)) + [f]        
             self.data = _copy_gen(self.data)
 
-
+        
         data_train = iter(self.data)
 
         callbacks = self.callbacks

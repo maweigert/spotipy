@@ -93,6 +93,41 @@ def points_to_prob(points, shape, sigma = 1.5,  mode = "max"):
         
     return x
 
+def points_to_flow(points, shape, sigma = 2):
+    points = np.asarray(points).astype(np.int32)
+    assert points.ndim==2 and points.shape[1]==2    
+    mask = np.zeros(shape, np.float32)
+    flow_x = np.zeros(shape, np.float32)
+    flow_y = np.zeros(shape, np.float32)
+    
+    points = _filter_shape(points, shape)
+
+    if len(points)==0:
+        return np.stack([flow_y,flow_x],-1)
+
+    D = cdist(points, points)
+    A = D < 8*sigma+1
+    np.fill_diagonal(A,False) 
+    G = nx.from_numpy_array(A)
+
+    while len(G)>0:
+        inds = nx.maximal_independent_set(G)
+        gauss = np.zeros(shape, np.float32)
+        gauss[tuple(points[inds].T)] = 1
+        g = gaussian_filter(gauss, sigma, mode=  "constant")
+        g /= (np.max(g)+1e-10)
+        fy = gaussian_filter(gauss, sigma, order=(1,0), mode=  "constant")
+        fx = gaussian_filter(gauss, sigma, order=(0,1), mode=  "constant")
+        fx /= (np.max(fx)+1e-10)
+        fy /= (np.max(fy)+1e-10)
+        m = g>mask 
+        flow_y[m] = fy[m]
+        flow_x[m] = fx[m]
+        mask = np.maximum(mask,g)
+        G.remove_nodes_from(inds)
+    flow = np.stack([flow_y,flow_x],-1)
+    return flow
+
 
 def prob_to_points(prob, prob_thresh=.5, min_distance = 2, subpix=False):
     assert prob.ndim==2, "Wrong dimension of prob"

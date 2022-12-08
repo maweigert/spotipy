@@ -16,12 +16,12 @@ if __name__ == '__main__':
     
     config = Config(n_channel_in=1, train_patch_size=(64,64), backbone='unet', spot_sigma=1)
 
-    model = SpotNet(config, name = None, basedir = None)
+    model = SpotNet(config, name = 'test', basedir = 'models')
 
     X,Y, P = dummy_data(128)
     Xv,Yv, Pv = dummy_data(16)
 
-    model.train(X,P, validation_data=[Xv, Pv], epochs=2, steps_per_epoch=128)
+    model.train(X,P, validation_data=[Xv, Pv], epochs=10, steps_per_epoch=128)
 
     model.optimize_thresholds(Xv,Pv)
 
