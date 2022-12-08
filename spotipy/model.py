@@ -756,7 +756,7 @@ class SpotNet(CARE):
                 y = center_crop(y, img.shape[:2])
 
             points = np.concatenate(points, axis=0)
-            points = _filter_shape(points, y.shape)
+            points = _filter_shape(points, img.shape[:2])
         
         if verbose: print(f"detected {len(points)} points")
 
