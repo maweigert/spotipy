@@ -511,7 +511,7 @@ class SpotNet(CARE):
 
     def prepare_for_training(self, optimizer=None):
         if optimizer is None:
-            optimizer = tf.keras.optimizers.Adam(lr=self.config.train_learning_rate)
+            optimizer = tf.keras.optimizers.Adam(learning_rate=self.config.train_learning_rate)
         # self.keras_model.compile(optimizer, loss="binary_crossentropy")
 
         weight = tf.keras.backend.variable(self.config.train_spot_weight)
