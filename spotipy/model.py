@@ -1,33 +1,28 @@
 from types import SimpleNamespace
 import numpy as np
 import sys
-import warnings
 from tqdm import tqdm 
 from collections import namedtuple
 from itertools import product
-import threading
 import tensorflow as tf
 from scipy.ndimage import zoom
 from scipy.ndimage.filters import maximum_filter
 from functools import lru_cache
 import tensorflow as tf
-from concurrent.futures import ThreadPoolExecutor
 
 from csbdeep.internals.nets import custom_unet
 from csbdeep.internals.train import ParameterDecayCallback
 from csbdeep.internals.predict import tile_iterator
 from csbdeep.utils import _raise, backend_channels_last, axes_check_and_normalize, axes_dict, load_json, save_json
-from csbdeep.utils.tf import export_SavedModel, CARETensorBoard, CARETensorBoardImage
-from csbdeep.models import BaseModel, BaseConfig, CARE
+from csbdeep.utils.tf import export_SavedModel, CARETensorBoardImage
+from csbdeep.models import CARE
 from csbdeep.models import Config as CareConfig
 from csbdeep.internals.train import RollingSequence
-from stardist.sample_patches import get_valid_inds, sample_patches
 
 from .multiscalenet import multiscale_unet, multiscale_resunet
 from .hrnet import hrnet
 from .utils import _filter_shape, points_to_flow, prob_to_points, points_to_prob, points_matching, optimize_threshold, points_matching, multiscale_decimate, voronoize_from_prob, center_pad, center_crop
 from .unetplus import unetplus_model, unetv2_model
-
 
 def weighted_bce_loss(extra_weight=1):
     thr = 0.01
@@ -170,7 +165,7 @@ class AccuracyCallback(tf.keras.callbacks.Callback):
         self.accs = []
 
     def on_epoch_end(self, epoch, logs={}):
-        X,Y = self.validation_data
+        X, Y = self.validation_data
 
         if self.spot_model.config.multiscale:
             p_gt = tuple(prob_to_points(y[...,0], prob_thresh=0.95, min_distance=0) for y in Y[0])
@@ -237,7 +232,7 @@ class Config(CareConfig):
 
 class SpotNetData(RollingSequence):
     """ creates a generator from data"""
-    def __init__(self, X,Y,F, patch_size, length, batch_size=4,  augmenter = None, workers=1, sample_ind_cache=True, maxfilter_patch_size=None, foreground_prob=0):
+    def __init__(self, X,P, patch_size, length, batch_size=4, sigma=2, augmenter = None):
         """datas has to be a tuple of all input/output lists, e.g.  
         datas = (X,Y)
         """
@@ -247,92 +242,49 @@ class SpotNetData(RollingSequence):
         x_ndim = X[0].ndim
         assert x_ndim in (nD,nD+1)
 
-
-        assert len(X)==len(Y)
-        assert all(tuple(x.shape[:2]==y.shape for x,y in zip(X,Y)))
-        # assert len(X)>=batch_size
+        assert len(X)==len(P)
         
         if x_ndim == nD:
             self.n_channel = None
         else:
             self.n_channel = X[0].shape[-1]
 
-        assert 0 <= foreground_prob <= 1
-        
         super().__init__(data_size=len(X),
                          batch_size=batch_size, length=length, shuffle=True)
 
-        self.X, self.Y, self.F = X, Y, F
+        self.X, self.P = X, P
         self.batch_size = batch_size
         self.patch_size = patch_size
+        self.sigma = sigma
         self.augmenter = augmenter
-        self.workers = workers
-        self.foreground_prob = foreground_prob
-            
-        self.max_filter = lambda y, patch_size: maximum_filter(y, patch_size, mode='constant')
-            
-        self.maxfilter_patch_size = maxfilter_patch_size if maxfilter_patch_size is not None else self.patch_size
 
-        self.sample_ind_cache = sample_ind_cache
-        self._ind_cache_fg  = {}
-        self._ind_cache_all = {}
-        self.lock = threading.Lock()        
-
-    def channels_as_tuple(self, x):
-        if self.n_channel is None:
-            return (x,)
-        else:
-            return tuple(x[...,i] for i in range(self.n_channel))
+    def _sample_patch(self, k):
+        x, p = self.X[k], self.P[k]
+        if any(p>s for p,s in zip(self.patch_size, x.shape)):
+            raise ValueError("patch size cannot be larger than image size")
+        offset = np.array([np.random.randint(0, s-p) for s,p in zip(x.shape[:2], self.patch_size)])
+        slices = tuple(slice(s,s+p) for s,p in zip(offset, self.patch_size))
+        p = p-offset
+        points = _filter_shape(p, self.patch_size)
+        return x[slices], points
 
 
-    def get_valid_inds(self, k, foreground_prob=None):
-        if foreground_prob is None:
-            foreground_prob = self.foreground_prob
-        foreground_only = np.random.uniform() < foreground_prob
-        _ind_cache = self._ind_cache_fg if foreground_only else self._ind_cache_all
-        if k in _ind_cache:
-            inds = _ind_cache[k]
-        else:
-            patch_filter = (lambda y,p: self.max_filter(y, self.maxfilter_patch_size) > 0) if foreground_only else None
-            inds = get_valid_inds(self.Y[k], self.patch_size, patch_filter=patch_filter)
-            if self.sample_ind_cache:
-                with self.lock:
-                    _ind_cache[k] = inds
-        if foreground_only and len(inds[0])==0:
-            # no foreground pixels available
-            return self.get_valid_inds(k, foreground_prob=0)
-        return inds
-
-    
     def __getitem__(self, i):
         idx = self.batch(i)
 
-
-        f_as_tuples = tuple(tuple(self.F[k][...,i] for i in range(self.F[k].shape[-1])) for k in idx)
-
-        arrays = [sample_patches((self.Y[k],) + f_as_tuples[i] + self.channels_as_tuple(self.X[k]),
-                                 patch_size=self.patch_size, n_samples=1,
-                                 valid_inds=self.get_valid_inds(k)) for i,k in enumerate(idx)]
-
-        X,Y,F = list(zip(*[(x[0],y[0], np.stack((fy[0], fx[0]), axis=-1)) for y,fy,fx,x in arrays]))
+        X, P = tuple(zip(*tuple(self._sample_patch(k) for k in idx)))
 
         if self.augmenter is not None:
             raise NotImplementedError()
-            if self.workers>1:
-                with ThreadPoolExecutor(max_workers=min(self.batch_size,8)) as e:
-                    X,Y = tuple(np.stack(t) for t in zip(*tuple(e.map(self.augmenter,zip(X,Y)))))
-            else:
-                X,Y = tuple(np.stack(t) for t in zip(*(self.augmenter(x) for x in zip(X,Y))))
+            X,Y = tuple(np.stack(t) for t in zip(*(self.augmenter(x) for x in zip(X,Y))))
+
+        F = tuple(points_to_flow(p, x.shape[:2], sigma=self.sigma) for x, p in zip(X,P))
 
         X = np.stack(X)
-        Y = np.stack(Y)
         F = np.stack(F)
-        
         if X.ndim == 3: # input image has no channel axis
             X = np.expand_dims(X,-1)
-        Y = np.expand_dims(Y,-1)
-
-        return X,Y,F
+        return X, F
 
 
 
@@ -480,7 +432,7 @@ class SpotNet(CARE):
 
         return model
 
-    def _prepare_target_multiscale(self, y ):
+    def _prepare_target_multiscale(self, y):
         """returns a tuple of multiscales (including the first scale)"""
         
         # image without channel (h, w)
@@ -516,7 +468,7 @@ class SpotNet(CARE):
 
     def prepare_for_training(self, optimizer=None):
         if optimizer is None:
-            optimizer = tf.keras.optimizers.Adam(lr=self.config.train_learning_rate)
+            optimizer = tf.keras.optimizers.Adam(learning_rate=self.config.train_learning_rate)
         # self.keras_model.compile(optimizer, loss="binary_crossentropy")
 
         weight = tf.keras.backend.variable(self.config.train_spot_weight)
@@ -605,12 +557,7 @@ class SpotNet(CARE):
         assert len(X)==len(P)
         assert X[0].ndim == (2 if self.config.n_channel_in==1 else 3)
 
-        Y = tuple(points_to_prob(p, x.shape[:2], sigma=self.config.train_spot_sigma, mode=self.config.train_spot_mode) for x, p in zip(X, P))
-        F = tuple(points_to_flow(p, x.shape[:2], sigma=2*self.config.train_spot_sigma) for x, p in zip(X, P))
-
         Xv, Pv = validation_data 
-        Yv = tuple(points_to_prob(p, x.shape[:2], sigma=self.config.train_spot_sigma, mode=self.config.train_spot_mode) for x, p in zip(Xv, Pv))
-        Fv = tuple(points_to_flow(p, x.shape[:2], sigma=2*self.config.train_spot_sigma) for x, p in zip(Xv, Pv))
         
         if self.config.n_channel_in==1:
             axes = self.config.axes.replace('C','')
@@ -635,29 +582,26 @@ class SpotNet(CARE):
         if not self._model_prepared:
             self.prepare_for_training()
             
-        self.data = SpotNetData(X, Y, F,
+        self.data = SpotNetData(X, P,
                                 augmenter = augmenter,
                                 length = epochs*steps_per_epoch,
                                 patch_size=self.config.train_patch_size,
-                                foreground_prob=self.config.train_foreground_prob,
-                                workers=workers,
                                 batch_size=self.config.train_batch_size)
         
-        _data_val = SpotNetData(Xv, Yv, Fv,
+        _data_val = SpotNetData(Xv, Pv,
                                 batch_size=max(16,len(Xv)), length=1,
-                                foreground_prob=self.config.train_foreground_prob,
                                 patch_size=self.config.train_patch_size
                                 )
         validation_data = _data_val[0]
 
         if self.config.multiscale:
             validation_data = (validation_data[0],
-                               list(self.prepare_targets(validation_data[1]))+[validation_data[2]])
+                               list(self.prepare_targets(.5+.5*validation_data[1][...,:1])) + [validation_data[1]])
                                
 
             def _copy_gen(gen):
-                for x, y, f in gen:
-                    yield x , list(self.prepare_targets(y)) + [f]        
+                for x, y in gen:
+                    yield x , list(self.prepare_targets(.5+.5*y[...,:1])) + [y]
             self.data = _copy_gen(self.data)
 
         

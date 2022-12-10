@@ -105,7 +105,7 @@ def multiscale_unet(
         layer = tf.keras.layers.Concatenate()([layer]+up_multiscale_layers)
         
     final = conv_block(n_channel_out, 1,1, activation=last_activation, dtype='float32', name=_name("final"))(layer)
-    final_flow = conv_block(2, 1,1, activation='linear', dtype='float32', name=_name("final_flow"))(layer)
+    final_flow = conv_block(3, 1,1, activation='linear', dtype='float32', name=_name("final_flow"))(layer)
 
     multiscale_factors.append(1)
     

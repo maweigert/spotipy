@@ -2,7 +2,8 @@ import numpy as np
 from spotipy.utils import points_to_prob
 import networkx as nx
 from scipy.spatial.distance import cdist
-from scipy.ndimage.filters import gaussian_filter
+from scipy.ndimage import gaussian_filter
+from spotipy.lib.spotflow2d import c_spotflow2d
 
 def points_to_flow(points, shape, sigma = 3):
     x = np.zeros(shape, np.float32)
@@ -39,11 +40,13 @@ if __name__ == '__main__':
 
     np.random.seed(42) 
 
-    N = 200
+    N = 512
     
-    p = np.random.randint(10,N-10,(30,2))
+    p = np.random.randint(10,N-10,(1000,2))
 
-    y = points_to_prob(p, shape=(N,N), sigma=1) 
-    u = points_to_flow(p, shape=(N,N), sigma=2) 
+    u = c_spotflow2d(p.astype(np.float32), np.int32(N), np.int32(N), np.float32(1.5))
+
+    # y = points_to_prob(p, shape=(N,N), sigma=1) 
+    # u = points_to_flow(p, shape=(N,N), sigma=2) 
 
     

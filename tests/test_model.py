@@ -23,8 +23,8 @@ if __name__ == '__main__':
 
     model.train(X,P, validation_data=[Xv, Pv], epochs=10, steps_per_epoch=128)
 
-    model.optimize_thresholds(Xv,Pv)
+    # model.optimize_thresholds(Xv,Pv)
 
-    points, _ = model.predict(X[0])
+    # points, _ = model.predict(X[0])
 
     
