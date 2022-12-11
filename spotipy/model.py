@@ -262,7 +262,7 @@ class SpotNetData(RollingSequence):
         x, p = self.X[k], self.P[k]
         if any(p>s for p,s in zip(self.patch_size, x.shape)):
             raise ValueError("patch size cannot be larger than image size")
-        offset = np.array([np.random.randint(0, s-p) for s,p in zip(x.shape[:2], self.patch_size)])
+        offset = np.array([np.random.randint(0, s-p+1) for s,p in zip(x.shape[:2], self.patch_size)])
         slices = tuple(slice(s,s+p) for s,p in zip(offset, self.patch_size))
         p = p-offset
         points = _filter_shape(p, self.patch_size)
@@ -494,8 +494,8 @@ class SpotNet(CARE):
             loss += [tf.keras.backend.binary_crossentropy]*(len(self.multiscale_factors)-1)
             loss_weights = list(1/np.array(self.multiscale_factors)**self.config.train_multiscale_loss_decay_exponent)
 
-            loss += [tf.keras.losses.mean_squared_error]
-            loss_weights += [10]
+            loss += [tf.keras.losses.mean_absolute_error]
+            loss_weights += [1]
         else:
             loss_weights = [1]
 
@@ -585,12 +585,14 @@ class SpotNet(CARE):
         self.data = SpotNetData(X, P,
                                 augmenter = augmenter,
                                 length = epochs*steps_per_epoch,
+                                sigma=self.config.train_spot_sigma,
                                 patch_size=self.config.train_patch_size,
                                 batch_size=self.config.train_batch_size)
         
         _data_val = SpotNetData(Xv, Pv,
                                 batch_size=max(16,len(Xv)), length=1,
-                                patch_size=self.config.train_patch_size
+                                patch_size=self.config.train_patch_size,
+                                sigma=self.config.train_spot_sigma,
                                 )
         validation_data = _data_val[0]
 
