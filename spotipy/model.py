@@ -25,13 +25,13 @@ from .utils import _filter_shape, points_to_flow, prob_to_points, points_to_prob
 from .unetplus import unetplus_model, unetv2_model
 
 def weighted_bce_loss(extra_weight=1):
-    thr = 0.01
+    thr = 0.05
     def _loss(y_true,y_pred):
         # mask_true = tf.keras.backend.cast(y_true>0.01, tf.keras.backend.floatx())
         # mask_pred = tf.keras.backend.cast(y_pred>0.1, tf.keras.backend.floatx())
         # mask = tf.keras.backend.maximum(mask_true, mask_pred)
         mask_gt   = tf.keras.backend.cast(y_true>=thr, tf.keras.backend.floatx())
-        mask_pred = tf.keras.backend.cast(y_true>=thr, tf.keras.backend.floatx())
+        mask_pred = tf.keras.backend.cast(y_pred>=thr, tf.keras.backend.floatx())
         mask = tf.math.maximum(mask_gt , mask_pred)
         loss = (1+extra_weight*mask)*tf.keras.backend.binary_crossentropy(y_true, y_pred)
         return loss
@@ -157,32 +157,24 @@ def dice_loss(y_true,y_pred):
 
 
 class AccuracyCallback(tf.keras.callbacks.Callback):
-    def __init__(self, spot_model, tb_callback, validation_data):
+    def __init__(self, spot_model, tb_callback, X, P):
         super().__init__()
-        self.validation_data = validation_data
+        self.X, self.P = X, P
         self.spot_model = spot_model
         self.tb_callback = tb_callback
         self.accs = []
 
     def on_epoch_end(self, epoch, logs={}):
-        X, Y = self.validation_data
-
-        if self.spot_model.config.multiscale:
-            p_gt = tuple(prob_to_points(y[...,0], prob_thresh=0.95, min_distance=0) for y in Y[0])
-        else:
-            p_gt = tuple(prob_to_points(y[...,0], prob_thresh=0.95, min_distance=0) for y in Y)
-            
+        p_pred, p_details  = tuple(zip(*tuple(self.spot_model.predict(x, verbose=False, return_prob=True) for x in self.X)))
         
-        p_pred, p_details  = tuple(zip(*tuple(self.spot_model.predict(x, verbose=False, return_prob=True) for x in X)))
-        
-        stats = tuple(points_matching(p1,p2) for p1,p2 in zip(p_gt, p_pred) if len(p_gt)>0)
+        stats = tuple(points_matching(p1,p2) for p1,p2 in zip(self.P, p_pred))
         
         ac = np.mean(tuple(s.accuracy for s in stats))
         f1 = np.mean(tuple(s.f1 for s in stats))
 
         self.accs.append(ac)
 
-        spot_prob = np.concatenate(tuple(details.prob[tuple(p1.T)] for p1, details in zip(p_gt, p_details)), axis=0)
+        spot_prob = np.concatenate(tuple(details.prob[tuple(p1.T.astype(int))] for p1, details in zip(self.P, p_details)), axis=0)
         spot_prob = spot_prob.mean()
 
         print(p_pred[0].shape)
@@ -412,11 +404,13 @@ class SpotNet(CARE):
             if self.config.backbone=='unet':
                 model = custom_unet((None,None,self.config.n_channel_in),
                            n_depth=self.config.unet_n_depth,
+                           n_channel_out=3,
                            n_filter_base=self.config.unet_n_filter_base,
                            kernel_size = (self.config.unet_kern_size,)*2,
-                            activation=self.config.activation,
+                           activation=self.config.activation,
                            pool_size=(self.config.unet_pool,self.config.unet_pool),
-                           last_activation=self.config.last_activation)
+                        #    last_activation=self.config.last_activation,
+                           last_activation='linear')
                 
             elif self.config.backbone=='hrnet':
                 model = hrnet((None,None,self.config.n_channel_in), n_channel_out=1)
@@ -495,19 +489,16 @@ class SpotNet(CARE):
             loss_weights = list(1/np.array(self.multiscale_factors)**self.config.train_multiscale_loss_decay_exponent)
 
             loss += [tf.keras.losses.mean_absolute_error]
-            loss_weights += [1]
+            loss_weights += [0]
         else:
             loss_weights = [1]
 
         print("loss_weights ", loss_weights)
         self.keras_model.compile(optimizer, loss=loss, loss_weights = loss_weights)
-
-                    
+ 
         self.callbacks = []
 
         self.callbacks.append(ParameterDecayCallback(weight, self.config.train_spot_weight_decay, name='extra_spot_weight', verbose=True))
-
-        
 
         self.tb_callback = None
         if self.basedir is not None:
@@ -610,7 +601,7 @@ class SpotNet(CARE):
         data_train = iter(self.data)
 
         callbacks = self.callbacks
-        self.callbacks.append(AccuracyCallback(self, self.tb_callback, validation_data))
+        self.callbacks.append(AccuracyCallback(self, self.tb_callback, Xv, Pv))
 
         if (self.config.train_tensorboard and self.basedir is not None and
             not any(isinstance(cb,CARETensorBoardImage) for cb in callbacks)):

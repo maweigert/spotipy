@@ -132,11 +132,6 @@ static PyObject* c_spotflow2d(PyObject *self, PyObject *args) {
         *(float *)PyArray_GETPTR3(dst,i,j,1) = y_prime;
         *(float *)PyArray_GETPTR3(dst,i,j,2) = x_prime;
 
-        // *(float *)PyArray_GETPTR3(dst,i,j,0) = 0;
-        // *(float *)PyArray_GETPTR3(dst,i,j,1) = 0;
-        // *(float *)PyArray_GETPTR3(dst,i,j,2) = 0;
-
-
 
     }
   }
