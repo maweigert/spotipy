@@ -24,15 +24,12 @@ from .hrnet import hrnet
 from .utils import _filter_shape, points_to_flow, prob_to_points, points_to_prob, points_matching, optimize_threshold, points_matching, multiscale_decimate, voronoize_from_prob, center_pad, center_crop
 from .unetplus import unetplus_model, unetv2_model
 
-def weighted_bce_loss(extra_weight=1):
-    thr = 0.05
+def weighted_bce_loss(extra_weight=1, thr=0.05):
     def _loss(y_true,y_pred):
-        # mask_true = tf.keras.backend.cast(y_true>0.01, tf.keras.backend.floatx())
-        # mask_pred = tf.keras.backend.cast(y_pred>0.1, tf.keras.backend.floatx())
-        # mask = tf.keras.backend.maximum(mask_true, mask_pred)
-        mask_gt   = tf.keras.backend.cast(y_true>=thr, tf.keras.backend.floatx())
-        mask_pred = tf.keras.backend.cast(y_pred>=thr, tf.keras.backend.floatx())
-        mask = tf.math.maximum(mask_gt , mask_pred)
+        # mask_gt   = tf.keras.backend.cast(y_true[...,:1]>=thr, tf.keras.backend.floatx())
+        # mask_pred = tf.keras.backend.cast(y_pred[...,:1]>=thr, tf.keras.backend.floatx())
+        # mask = tf.math.maximum(mask_gt , mask_pred)
+        mask = tf.keras.backend.cast(y_true[...,:1]>=thr, tf.keras.backend.floatx())
         loss = (1+extra_weight*mask)*tf.keras.backend.binary_crossentropy(y_true, y_pred)
         return loss
     return _loss
@@ -63,9 +60,15 @@ def weighted_mae_loss(extra_weight=1):
         return loss        
     return _loss
 
-def weighted_mse_loss(extra_weight=1):
+def weighted_mse_loss(extra_weight=1, thr=0.05):
     def _loss(y_true,y_pred):
-        mask = tf.keras.backend.cast(y_true>0.001, tf.keras.backend.floatx())
+        # mask  = tf.keras.backend.cast(y_true>=thr, tf.keras.backend.floatx())
+        mask   = tf.keras.backend.cast(y_true[...,:1]>=thr, tf.keras.backend.floatx())
+        # mask_gt   = tf.keras.backend.cast(y_true[...,:1]>=thr, tf.keras.backend.floatx())
+        # mask_pred = tf.keras.backend.cast(y_pred[...,:1]>=thr, tf.keras.backend.floatx())
+        # mask_gt   = tf.keras.backend.cast(y_true>=thr, tf.keras.backend.floatx())
+        # mask_pred = tf.keras.backend.cast(y_pred>=thr, tf.keras.backend.floatx())
+        # mask = tf.math.maximum(mask_gt , mask_pred)
         loss = (1+extra_weight*mask)*tf.keras.backend.square(y_true-y_pred)
         return loss        
     return _loss
@@ -153,7 +156,6 @@ def dice_loss(y_true,y_pred):
     denom = tf.reduce_sum(y_true + y_pred) + 1e-10
     loss = 1 - num/denom
     return loss
-
 
 
 class AccuracyCallback(tf.keras.callbacks.Callback):
@@ -267,8 +269,7 @@ class SpotNetData(RollingSequence):
         X, P = tuple(zip(*tuple(self._sample_patch(k) for k in idx)))
 
         if self.augmenter is not None:
-            raise NotImplementedError()
-            X,Y = tuple(np.stack(t) for t in zip(*(self.augmenter(x) for x in zip(X,Y))))
+            X = tuple(self.augmenter(x) for x in X)
 
         F = tuple(points_to_flow(p, x.shape[:2], sigma=self.sigma) for x, p in zip(X,P))
 
@@ -470,7 +471,7 @@ class SpotNet(CARE):
         if self.config.mode == "bce":
             loss = [weighted_bce_loss(weight)]
         elif self.config.mode == "mse":
-            loss = [weighted_mse_loss(weight)]
+            loss = [weighted_mse_loss(weight, thr=-.8)]
         elif self.config.mode == "mae":
             loss = [weighted_mae_loss(weight)]
         elif self.config.mode == "scale_sum":
