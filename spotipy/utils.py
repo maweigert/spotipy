@@ -17,7 +17,7 @@ from scipy.spatial.distance import cdist
 from types import SimpleNamespace
 import pandas as pd
 
-from .lib.spotflow2d import c_spotflow2d
+from .lib.spotflow2d import c_spotflow2d, c_cluster_flow2d
 
 
 def read_coords_csv(fname: str): 
@@ -103,6 +103,17 @@ def points_to_flow(points, shape, sigma = 1.5):
         return flow
     else:
         return c_spotflow2d(points.astype(np.float32, copy=False), np.int32(shape[0]), np.int32(shape[1]), np.float32(sigma))
+
+def cluster_flow(flow: np.ndarray, mask: np.ndarray, min_distance:float=1, niter:int=10, dt = .1, atol=0.1):
+    points = np.stack(np.where(mask), -1) 
+    if len(points)==0:
+        return points, points 
+    else:
+        return c_cluster_flow2d(
+                points.astype(np.float32, copy=False),
+                flow.astype(np.float32, copy=False),
+                np.float32(dt), np.float32(atol), np.float32(min_distance), np.uint32(niter))
+
 
 def prob_to_points(prob, prob_thresh=.5, min_distance = 2, subpix=False):
     assert prob.ndim==2, "Wrong dimension of prob"

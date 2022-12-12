@@ -1,7 +1,7 @@
 import numpy as np
 from augmend import Augmend, Elastic
 from spotipy.model import Config, SpotNetData, SpotNet
-from spotipy.utils import points_to_prob, points_to_flow
+from spotipy.utils import points_to_prob
 
 
 if __name__ == '__main__':
