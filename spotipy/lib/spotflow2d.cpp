@@ -63,6 +63,92 @@ inline int round_to_int(float r)
     return (int)lrint(r);
 }
 
+
+static PyObject *c_gaussian2d(PyObject *self, PyObject *args)
+{
+
+    PyArrayObject *points = NULL;
+    PyArrayObject *dst = NULL;
+    int shape_y, shape_x;
+    float sigma;
+
+    if (!PyArg_ParseTuple(args, "O!iif", &PyArray_Type, &points, &shape_y, &shape_x, &sigma))
+        return NULL;
+
+    npy_intp *dims = PyArray_DIMS(points);
+
+    npy_intp dims_dst[2];
+    dims_dst[0] = shape_y;
+    dims_dst[1] = shape_x;
+
+    dst = (PyArrayObject *)PyArray_SimpleNew(2, dims_dst, NPY_FLOAT32);
+
+    // build kdtree
+
+    PointCloud2D<float> cloud;
+    float query_point[2];
+    nanoflann::SearchParams params;
+    std::vector<std::pair<size_t, float>> results;
+
+    cloud.pts.resize(dims[0]);
+    for (long i = 0; i < dims[0]; i++)
+    {
+        cloud.pts[i].y = *(float *)PyArray_GETPTR2(points, i, 0);
+        cloud.pts[i].x = *(float *)PyArray_GETPTR2(points, i, 1);
+    }
+
+    // construct a kd-tree:
+    typedef nanoflann::KDTreeSingleIndexAdaptor<
+        nanoflann::L2_Simple_Adaptor<float, PointCloud2D<float>>,
+        PointCloud2D<float>, 2>
+        my_kd_tree_t;
+
+    // build the index from points
+    my_kd_tree_t index(2, cloud, nanoflann::KDTreeSingleIndexAdaptorParams(10 /* max leaf */));
+
+    index.buildIndex();
+
+    const float sigma_denom = 2 * sigma * sigma;
+
+#ifdef __APPLE__
+#pragma omp parallel for
+#else
+#pragma omp parallel for schedule(dynamic)
+#endif
+    for (int i = 0; i < dims_dst[0]; i++)
+    {
+        for (int j = 0; j < dims_dst[1]; j++)
+        {
+
+            // get the closest point
+            size_t num_results = 1;
+            const float query_pt[2] = {(float)j, (float)i};
+            std::vector<unsigned long> ret_index(num_results);
+            std::vector<float> out_dist_sqr(num_results);
+
+            num_results = index.knnSearch(
+                &query_pt[0], num_results, &ret_index[0], &out_dist_sqr[0]);
+
+            // the coords of the closest point
+            const float px = cloud.pts[ret_index[0]].x;
+            const float py = cloud.pts[ret_index[0]].y;
+
+            const float y = py - i;
+            const float x = px - j;
+
+            const float r2 = x * x + y * y;
+
+            // the gaussian value
+            const float val = exp(-r2 / sigma_denom);
+            
+            *(float *)PyArray_GETPTR2(dst, i, j) = val;
+        }
+    }
+
+    return PyArray_Return(dst);
+}
+
+
 static PyObject *c_spotflow2d(PyObject *self, PyObject *args)
 {
 
@@ -152,7 +238,6 @@ static PyObject *c_spotflow2d(PyObject *self, PyObject *args)
     return PyArray_Return(dst);
 }
 
-float interp_bicubic()
 
 float interp_flow(PyArrayObject *data, const int dim, float y, float x, int Ny, int Nx)
 {
@@ -353,6 +438,7 @@ static PyObject *c_cluster_flow2d(PyObject *self, PyObject *args)
 
 static struct PyMethodDef methods[] = {
     {"c_spotflow2d", c_spotflow2d, METH_VARARGS, "spot flow"},
+    {"c_gaussian2d", c_gaussian2d, METH_VARARGS, "gaussian"},
     {"c_cluster_flow2d", c_cluster_flow2d, METH_VARARGS, "cluster flow"},
     {NULL, NULL, 0, NULL}
 

@@ -3,7 +3,7 @@ from spotipy.utils import points_to_prob
 import networkx as nx
 from scipy.spatial.distance import cdist
 from scipy.ndimage import gaussian_filter
-from spotipy.utils import points_to_flow, cluster_flow, prob_to_points, points_matching
+from spotipy.utils import points_to_flow, cluster_flow, points_to_prob, prob_to_points, points_matching
 
 
 
@@ -24,6 +24,8 @@ if __name__ == '__main__':
     # p0 = np.array([[N/2-dp, N/2], [N/2+dp, N/2]]) + .1*np.random.uniform(-1,1,(2,2))
     
 
+    u0 = points_to_prob(p0, (N,N), sigma=1)
+
     u = points_to_flow(p0, (N,N), sigma=1)
 
     thresh = .3
@@ -41,6 +43,7 @@ if __name__ == '__main__':
 
     p = np.stack([cluster_flow(u, u[...,0]>thresh, niter=n, dt=.1, atol=1e-3)[1] for n in range(100)], 0)
     pp = np.concatenate([np.concatenate((i*np.ones((len(_p),1)), _p), -1) for i,_p in enumerate(p)], 0)
+
 
 # napclf()
 # napshow(u[...,0])

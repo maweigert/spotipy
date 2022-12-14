@@ -192,7 +192,7 @@ class Config(CareConfig):
         kwargs.setdefault("unet_kern_size",3)
         kwargs.setdefault("unet_n_filter_base",32)
         kwargs.setdefault("unet_pool",2)
-        kwargs.setdefault("mode",mode)
+        kwargs.setdefault("mode", mode)
         super().__init__(axes=axes, unet_n_depth=unet_n_depth,
                          allow_new_parameters=True, **kwargs)
         self.train_spot_weight = spot_weight
@@ -209,9 +209,15 @@ class Config(CareConfig):
         self.activation = activation
         self.remove_bkg = remove_bkg
 
+        if multiscale: 
+            raise NotImplementedError("multiscale not implemented yet")
+
         assert backbone in ('unet', 'unetv2', 'resunet', 'hrnet' , 'hrnet2')
         self.backbone = backbone
-        
+
+        if spot_mode == 'flow' and not mode in ('mse', 'mae'):
+            raise ValueError('loss mode must be mse or mae for spot_mode=flow')
+
         if mode in ("mae", "mse", "bce", "scale_sum", "focal","dice"):
             self.mode = mode
         else:
@@ -220,7 +226,7 @@ class Config(CareConfig):
 
 class SpotNetData(RollingSequence):
     """ creates a generator from data"""
-    def __init__(self, X,P, patch_size, length, batch_size=4, sigma=2, shuffle=True, augmenter = None):
+    def __init__(self, X,P, patch_size, length, batch_size=4, spot_mode='flow', sigma=2, shuffle=True, augmenter = None):
         """datas has to be a tuple of all input/output lists, e.g.  
         datas = (X,Y)
         """
@@ -231,6 +237,9 @@ class SpotNetData(RollingSequence):
         assert x_ndim in (nD,nD+1)
 
         assert len(X)==len(P)
+
+        if not spot_mode in ('flow','max', 'sum'):
+            raise NotImplementedError(f'unknown mode {spot_mode}')
         
         if x_ndim == nD:
             self.n_channel = None
@@ -240,6 +249,7 @@ class SpotNetData(RollingSequence):
         super().__init__(data_size=len(X),
                          batch_size=batch_size, length=length, shuffle=shuffle)
 
+        self.mode = spot_mode
         self.X, self.P = X, P
         self.batch_size = batch_size
         self.patch_size = patch_size
@@ -265,7 +275,14 @@ class SpotNetData(RollingSequence):
         if self.augmenter is not None:
             X = tuple(self.augmenter(x) for x in X)
 
-        F = tuple(points_to_flow(p, x.shape[:2], sigma=self.sigma) for x, p in zip(X,P))
+        if self.mode == 'flow':
+            F = tuple(points_to_flow(p, x.shape[:2], sigma=self.sigma) for x, p in zip(X,P))
+        elif self.mode == 'max':
+            F = tuple(points_to_prob(p, x.shape[:2], mode='max', sigma=self.sigma) for x, p in zip(X,P))
+        elif self.mode == 'sum':
+            F = tuple(points_to_prob(p, x.shape[:2], mode='sum', sigma=self.sigma) for x, p in zip(X,P))
+        else: 
+            raise NotImplementedError(f'unknown mode {self.mode}')
 
         X = np.stack(X)
         F = np.stack(F)
@@ -399,13 +416,12 @@ class SpotNet(CARE):
             if self.config.backbone=='unet':
                 model = custom_unet((None,None,self.config.n_channel_in),
                            n_depth=self.config.unet_n_depth,
-                           n_channel_out=3,
+                           n_channel_out=3 if self.config.train_spot_mode == 'flow' else 1,
                            n_filter_base=self.config.unet_n_filter_base,
                            kernel_size = (self.config.unet_kern_size,)*2,
                            activation=self.config.activation,
                            pool_size=(self.config.unet_pool,self.config.unet_pool),
-                        #    last_activation=self.config.last_activation,
-                           last_activation='linear')
+                           last_activation='linear' if self.config.train_spot_mode == 'flow' else 'sigmoid')
                 
             elif self.config.backbone=='hrnet':
                 model = hrnet((None,None,self.config.n_channel_in), n_channel_out=1)
@@ -417,9 +433,10 @@ class SpotNet(CARE):
         if self.config.remove_bkg:    
             x = RemoveBackground(radius=51)(inp)
             out = model(x)
-            out = tf.keras.layers.Lambda(lambda x: tf.keras.backend.l2_normalize(x, axis=-1))(out)
         else: 
             out = model(inp)
+
+        if self.config.train_spot_mode=='flow':
             out = tf.keras.layers.Lambda(lambda x: tf.keras.backend.l2_normalize(x, axis=-1))(out)
 
         model = tf.keras.models.Model(inp, out)
@@ -774,4 +791,3 @@ class SpotNet(CARE):
         
         return points_matching(points_gt[:,[1,0]], points)
     
-

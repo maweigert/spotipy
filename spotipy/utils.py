@@ -17,7 +17,7 @@ from scipy.spatial.distance import cdist
 from types import SimpleNamespace
 import pandas as pd
 
-from .lib.spotflow2d import c_spotflow2d, c_cluster_flow2d
+from .lib.spotflow2d import c_spotflow2d, c_cluster_flow2d, c_gaussian2d
 
 
 def read_coords_csv(fname: str): 
@@ -53,7 +53,7 @@ def points_to_prob(points, shape, sigma = 1.5,  mode = "max"):
     warnings.warn('Order of point dimensions in points_to_prob changed in 0.2.0 (was XY, is now YX)')
 
     x = np.zeros(shape, np.float32)
-    points = np.asarray(points).astype(np.int32)
+    points = np.asarray(points)
     assert points.ndim==2 and points.shape[1]==2
 
     points = _filter_shape(points, shape)
@@ -62,21 +62,23 @@ def points_to_prob(points, shape, sigma = 1.5,  mode = "max"):
         return x 
     
     if mode == "max":
-        D = cdist(points, points)
-        A = D < 8*sigma+1
-        np.fill_diagonal(A,False) 
-        G = nx.from_numpy_array(A)
-        x = np.zeros(shape, np.float32)
-        while len(G)>0:
-            inds = nx.maximal_independent_set(G)
-            gauss = np.zeros(shape, np.float32)
-            gauss[tuple(points[inds].T)] = 1
-            g = gaussian_filter(gauss, sigma, mode=  "constant")
-            g /= np.max(g)
-            x = np.maximum(x,g)
-            G.remove_nodes_from(inds)
+        x = c_gaussian2d(points.astype(np.float32, copy=False), np.int32(shape[0]), np.int32(shape[1]), np.float32(sigma))
+        # D = cdist(points, points)
+        # A = D < 8*sigma+1
+        # np.fill_diagonal(A,False) 
+        # G = nx.from_numpy_array(A)
+        # x = np.zeros(shape, np.float32)
+        # while len(G)>0:
+        #     inds = nx.maximal_independent_set(G)
+        #     gauss = np.zeros(shape, np.float32)
+        #     gauss[tuple(points[inds].T)] = 1
+        #     g = gaussian_filter(gauss, sigma, mode=  "constant")
+        #     g /= np.max(g)
+        #     x = np.maximum(x,g)
+        #     G.remove_nodes_from(inds)
                 
     elif mode == 'sum':
+        points = points.astype(np.int32)
         x = np.zeros(shape, np.float32)
         for px, py in points:
             x[px, py] = 1
