@@ -53,22 +53,16 @@ def focal_loss(extra_weight=1, gamma=2):
 
 
 
-def weighted_mae_loss(extra_weight=1):
+def weighted_mae_loss(extra_weight=1, thr=0.05):
     def _loss(y_true,y_pred):
-        mask = tf.keras.backend.cast(y_true>0.001, tf.keras.backend.floatx())
+        mask = tf.keras.backend.cast(y_true[...,:1]>thr, tf.keras.backend.floatx())
         loss = (1+extra_weight*mask)*tf.keras.backend.abs(y_true-y_pred)
         return loss        
     return _loss
 
 def weighted_mse_loss(extra_weight=1, thr=0.05):
     def _loss(y_true,y_pred):
-        # mask  = tf.keras.backend.cast(y_true>=thr, tf.keras.backend.floatx())
         mask   = tf.keras.backend.cast(y_true[...,:1]>=thr, tf.keras.backend.floatx())
-        # mask_gt   = tf.keras.backend.cast(y_true[...,:1]>=thr, tf.keras.backend.floatx())
-        # mask_pred = tf.keras.backend.cast(y_pred[...,:1]>=thr, tf.keras.backend.floatx())
-        # mask_gt   = tf.keras.backend.cast(y_true>=thr, tf.keras.backend.floatx())
-        # mask_pred = tf.keras.backend.cast(y_pred>=thr, tf.keras.backend.floatx())
-        # mask = tf.math.maximum(mask_gt , mask_pred)
         loss = (1+extra_weight*mask)*tf.keras.backend.square(y_true-y_pred)
         return loss        
     return _loss
@@ -167,7 +161,7 @@ class AccuracyCallback(tf.keras.callbacks.Callback):
         self.accs = []
 
     def on_epoch_end(self, epoch, logs={}):
-        p_pred, p_details  = tuple(zip(*tuple(self.spot_model.predict(x, verbose=False, return_prob=True) for x in self.X)))
+        p_pred, p_details  = tuple(zip(*tuple(self.spot_model.predict(x, verbose=False, return_details=True) for x in self.X)))
         
         stats = tuple(points_matching(p1,p2) for p1,p2 in zip(self.P, p_pred))
         
@@ -226,7 +220,7 @@ class Config(CareConfig):
 
 class SpotNetData(RollingSequence):
     """ creates a generator from data"""
-    def __init__(self, X,P, patch_size, length, batch_size=4, sigma=2, augmenter = None):
+    def __init__(self, X,P, patch_size, length, batch_size=4, sigma=2, shuffle=True, augmenter = None):
         """datas has to be a tuple of all input/output lists, e.g.  
         datas = (X,Y)
         """
@@ -244,7 +238,7 @@ class SpotNetData(RollingSequence):
             self.n_channel = X[0].shape[-1]
 
         super().__init__(data_size=len(X),
-                         batch_size=batch_size, length=length, shuffle=True)
+                         batch_size=batch_size, length=length, shuffle=shuffle)
 
         self.X, self.P = X, P
         self.batch_size = batch_size
@@ -322,7 +316,7 @@ class SpotNet(CARE):
                           "(Call 'optimize_thresholds' to change that.)")
 
         self.thresholds = dict (
-            prob = 0.5 if threshs['prob'] is None else threshs['prob'],
+            prob = 0 if threshs['prob'] is None else threshs['prob'],
         )
         print("Loaded/default threshold values: prob_thresh={prob:g}".format(prob=self.thresholds.prob))
 
@@ -417,12 +411,18 @@ class SpotNet(CARE):
                 model = hrnet((None,None,self.config.n_channel_in), n_channel_out=1)
             else:
                 raise ValueError(self.config.backbone)
-                
-        if self.config.remove_bkg:
-            inp = tf.keras.layers.Input((None,None, self.config.n_channel_in))
+
+        inp = tf.keras.layers.Input((None,None, self.config.n_channel_in))
+
+        if self.config.remove_bkg:    
             x = RemoveBackground(radius=51)(inp)
             out = model(x)
-            model = tf.keras.models.Model(inp, out)
+            out = tf.keras.layers.Lambda(lambda x: tf.keras.backend.l2_normalize(x, axis=-1))(out)
+        else: 
+            out = model(inp)
+            out = tf.keras.layers.Lambda(lambda x: tf.keras.backend.l2_normalize(x, axis=-1))(out)
+
+        model = tf.keras.models.Model(inp, out)
 
 
         return model
@@ -473,7 +473,7 @@ class SpotNet(CARE):
         elif self.config.mode == "mse":
             loss = [weighted_mse_loss(weight, thr=-.8)]
         elif self.config.mode == "mae":
-            loss = [weighted_mae_loss(weight)]
+            loss = [weighted_mae_loss(weight, thr=-.8)]
         elif self.config.mode == "scale_sum":
             loss = [scale_sum(weight)]
         elif self.config.mode == "focal":
@@ -490,7 +490,7 @@ class SpotNet(CARE):
             loss_weights = list(1/np.array(self.multiscale_factors)**self.config.train_multiscale_loss_decay_exponent)
 
             loss += [tf.keras.losses.mean_absolute_error]
-            loss_weights += [0]
+            loss_weights += [1]
         else:
             loss_weights = [1]
 
@@ -576,6 +576,7 @@ class SpotNet(CARE):
             
         self.data = SpotNetData(X, P,
                                 augmenter = augmenter,
+                                shuffle=True,
                                 length = epochs*steps_per_epoch,
                                 sigma=self.config.train_spot_sigma,
                                 patch_size=self.config.train_patch_size,
@@ -583,6 +584,7 @@ class SpotNet(CARE):
         
         _data_val = SpotNetData(Xv, Pv,
                                 batch_size=max(16,len(Xv)), length=1,
+                                shuffle=False,
                                 patch_size=self.config.train_patch_size,
                                 sigma=self.config.train_spot_sigma,
                                 )
@@ -600,6 +602,8 @@ class SpotNet(CARE):
 
         
         data_train = iter(self.data)
+
+        self.data_val = validation_data
 
         callbacks = self.callbacks
         self.callbacks.append(AccuracyCallback(self, self.tb_callback, Xv, Pv))
@@ -630,14 +634,16 @@ class SpotNet(CARE):
         return tuple((pool_div_by if a in 'XYZT' else 1) for a in query_axes)
 
     def _predict_prob(self, x, **kwargs):
+        assert x.ndim ==3 and x.shape[-1]==self.config.n_channel_in
+        u = self.keras_model.predict(x[np.newaxis], **kwargs)
         if self.config.multiscale:
-            return self.keras_model.predict(x[np.newaxis], **kwargs)[0][0,...,0]
-        else:
-            return self.keras_model.predict(x[np.newaxis], **kwargs)[0,...,0]
+            u = u[-1] 
+        u = u / (np.linalg.norm(u, axis=-1, keepdims=True)+1e-7)
+        return u[0,...,0]
 
     
     def predict(self, img, prob_thresh=None, n_tiles=(1,1), subpix = False, min_distance=2, scale = None, 
-                    normalizer=None, return_prob = False,
+                    normalizer=None, return_details = False,
                     verbose=True, show_tile_progress=False):
 
         if img.ndim==2:
@@ -672,7 +678,7 @@ class SpotNet(CARE):
                         
         else:
             # output array
-            if return_prob:
+            if return_details:
                 y = np.empty(x.shape[:2], np.float32)
 
             points = [] 
@@ -692,14 +698,14 @@ class SpotNet(CARE):
                 y_tile = self._predict_prob(tile, verbose=False)
                 y_tile_sub = y_tile[s_src[:2]] 
 
-                if return_prob:
+                if return_details:
                     y[s_dst[:2]] = y_tile_sub
 
                 p = prob_to_points(y_tile_sub, prob_thresh=prob_thresh, subpix=subpix, min_distance=min_distance)
                 p += np.array([s.start for s in s_dst[:2]])[None]
                 points.append(p) 
 
-            if return_prob:
+            if return_details:
                 if scale is not None:
                     print('zooming')
                     y = zoom(y, (1./scale,1./scale), order=1)
@@ -710,7 +716,7 @@ class SpotNet(CARE):
         
         if verbose: print(f"detected {len(points)} points")
 
-        if return_prob:
+        if return_details:
             details = SimpleNamespace(prob = y)
         else: 
             details = SimpleNamespace()
