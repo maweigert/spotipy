@@ -4,6 +4,7 @@
 #include <iostream>
 #include <stdio.h>
 #include <string>
+#include <algorithm>
 
 #include "numpy/arrayobject.h"
 
@@ -27,6 +28,11 @@ template <typename T> struct Point3D
 {
         T x, y, z;
 };
+
+template <typename T> bool points_greater(const Point3D<T> &a, const Point3D<T> &b)
+{
+    return a.z>b.z;
+}
 
 template <typename T>
 struct PointCloud2D
@@ -146,6 +152,8 @@ static PyObject *c_spotflow2d(PyObject *self, PyObject *args)
     return PyArray_Return(dst);
 }
 
+float interp_bicubic()
+
 float interp_flow(PyArrayObject *data, const int dim, float y, float x, int Ny, int Nx)
 {
 
@@ -153,9 +161,9 @@ float interp_flow(PyArrayObject *data, const int dim, float y, float x, int Ny, 
         return 0;
 
     int x0 = (int)floor(x);
-    int x1 = (int)ceil(x);
+    int x1 = x0+1;
     int y0 = (int)floor(y);
-    int y1 = (int)ceil(y);
+    int y1 = y0+1;
 
     float dx = x - x0;
     float dy = y - y0;
@@ -189,28 +197,30 @@ static PyObject *c_cluster_flow2d(PyObject *self, PyObject *args)
     npy_intp *dims_points = PyArray_DIMS(points);
     npy_intp *dims_flow = PyArray_DIMS(flow);
 
-    std::vector<float> points_z;
-    std::vector<float> points_y;
-    std::vector<float> points_x;
+    std::vector<Point3D<float>> coords;
 
     for (long i = 0; i < dims_points[0]; i++)
     {
-        float py = *(float *)PyArray_GETPTR2(points, i, 0);
-        float px = *(float *)PyArray_GETPTR2(points, i, 1);
-        points_z.push_back(interp_flow(flow, 0, py, px, dims_flow[0], dims_flow[1]));
-        points_y.push_back(py);
-        points_x.push_back(px);
+        Point3D<float> pp;
+        pp.y = *(float *)PyArray_GETPTR2(points, i, 0);
+        pp.x = *(float *)PyArray_GETPTR2(points, i, 1);
+        pp.z = interp_flow(flow, 0, pp.y, pp.x, dims_flow[0], dims_flow[1]);
+        coords.push_back(pp);
     }
+
+    std::vector<bool> suppressed(coords.size(), false);
+
 
 #ifdef __APPLE__
 #pragma omp parallel for
 #else
 #pragma omp parallel for schedule(dynamic)
 #endif
-    for (long i = 0; i < points_x.size(); i++)
-    {
-        float py = points_y[i];
-        float px = points_x[i];
+    for (long i = 0; i < coords.size(); i++){
+        float py = coords[i].y;
+        float px = coords[i].x;
+
+        float dx, dy;
 
         for (long n = 0; n < steps; n++)
         {
@@ -222,68 +232,115 @@ static PyObject *c_cluster_flow2d(PyObject *self, PyObject *args)
             vx = vx / (1 + vz);
             vy = vy / (1 + vz);
 
-            float dy = vy * dt;
-            float dx = vx * dt;
+            // if (fabs(coords[i].x-16)<1 && fabs(coords[i].y-13)<1)
+            //     std::cout << "i: " << i <<   " vx: " << vx << ", vy: " << vy << std::endl;
+
+            dy = vy * dt;
+            dx = vx * dt;
 
             py += dy;
             px += dx;
+
+            if (dx * dx + dy * dy <= atol * atol)
+                break;
         }
 
-        points_y[i] = py;
-        points_x[i] = px;
-    }
-
-    // NMS
-
-    
-    std::vector<bool> suppressed;
-
-
-    // argsort points
-
-
-    for (long i = 0; i < points_x.size(); i++)
-    {
-        suppressed.push_back(false);
-    }
-
-    for (long i = 0; i < points_x.size(); i++)
-    {
-        for (long j = i + 1; j < points_x.size(); j++)
-        {
-            if (suppressed[j])
-                continue;
-
-            float dy = points_y[i] - points_y[j];
-            float dx = points_x[i] - points_x[j];
-
-            if (dy * dy + dx * dx < min_distance * min_distance)
-            {
-                if (points_z[i] > points_z[j])
-                {
-                    suppressed[j] = true;
-                }
-                else
-                {
-                    suppressed[i] = true;
-                }
-            }
+        if (dx * dx + dy * dy > atol * atol){
+            suppressed[i] = true;
         }
+
+        coords[i].y = py;
+        coords[i].x = px;
+        
     }
 
     npy_intp dims_dst_mapped[2];
-    dims_dst_mapped[0] = points_x.size();
+    dims_dst_mapped[0] = coords.size();
     dims_dst_mapped[1] = 2;
 
     dst_mapped = (PyArrayObject *)PyArray_SimpleNew(2, dims_dst_mapped, NPY_FLOAT32);
 
-    dst = (PyArrayObject *)PyArray_SimpleNew(2, dims_dst_mapped, NPY_FLOAT32);
-
-    for (long i = 0; i < points_x.size(); i++)
+    for (long i = 0; i < coords.size(); i++)
     {
-        *(float *)PyArray_GETPTR2(dst_mapped, i, 0) = points_y[i];
-        *(float *)PyArray_GETPTR2(dst_mapped, i, 1) = points_x[i];
+        *(float *)PyArray_GETPTR2(dst_mapped, i, 0) = coords[i].y;
+        *(float *)PyArray_GETPTR2(dst_mapped, i, 1) = coords[i].x;
     }
+
+
+    // average weighted aggregation
+    // sort points by z 
+
+    std::sort(coords.begin(), coords.end(), points_greater<float>);
+
+    // for (long i = 0; i < coords.size(); i++){
+    //     std::cout << "z" << coords[i].z << " y: " << coords[i].y << " x: " << coords[i].x << std::endl;
+    // }
+
+
+    for (long i = 0; i < coords.size(); i++){
+        if (suppressed[i])
+            continue;
+
+
+        // float new_weight = 1+coords[i].z;
+        float new_weight = 1;
+        Point2D<float> new_pos ;
+        new_pos.x = new_weight * coords[i].x;
+        new_pos.y = new_weight * coords[i].y;
+
+        // std::cout << "i:   " << i << " coords[i].x: " << coords[i].x << " coords[i].y: " << coords[i].y << std::endl;
+
+#ifdef __APPLE__
+#pragma omp parallel for
+#else
+#pragma omp parallel for schedule(dynamic) reduction(+:new_weight) reduction(+:new_pos) reduction(+:new_pos)
+#endif
+        for (long j = i + 1; j < coords.size(); j++){
+            float dy = coords[i].y - coords[j].y;
+            float dx = coords[i].x - coords[j].x;
+
+            if (dy * dy + dx * dx < min_distance * min_distance){
+                suppressed[j] = true;
+
+                new_pos.x += coords[j].x;
+                new_pos.y += coords[j].y;
+                // new_weight += 1+coords[j].z;
+                new_weight += 1;
+
+                // std::cout << new_weight << std::endl;
+            }
+        }
+
+        
+
+        // new point is weighted average of all points within min_distance
+        coords[i].x = new_pos.x / new_weight;
+        coords[i].y = new_pos.y / new_weight;
+
+        // std::cout << "---> " << i << " coords[i].x: " << coords[i].x << " coords[i].y: " << coords[i].y << std::endl;
+
+    }
+
+    std::vector<Point3D<float>> coords_filtered;
+
+    for (long i = 0; i < coords.size(); i++){
+        if (!suppressed[i])
+            coords_filtered.push_back(coords[i]);
+    }
+
+    npy_intp dims_dst[2];
+    dims_dst[0] = coords_filtered.size();
+    dims_dst[1] = 2;
+
+    dst = (PyArrayObject *)PyArray_SimpleNew(2, dims_dst, NPY_FLOAT32);
+
+    for (long i = 0; i < coords_filtered.size(); i++)
+    {
+        *(float *)PyArray_GETPTR2(dst, i, 0) = coords_filtered[i].y;
+        *(float *)PyArray_GETPTR2(dst, i, 1) = coords_filtered[i].x;
+    }
+
+
 
     PyObject *ret = PyTuple_New(2);
     PyTuple_SetItem(ret, 0, PyArray_Return(dst));

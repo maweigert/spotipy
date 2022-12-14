@@ -104,7 +104,7 @@ def points_to_flow(points, shape, sigma = 1.5):
     else:
         return c_spotflow2d(points.astype(np.float32, copy=False), np.int32(shape[0]), np.int32(shape[1]), np.float32(sigma))
 
-def cluster_flow(flow: np.ndarray, mask: np.ndarray, min_distance:float=1, niter:int=10, dt = .1, atol=0.1):
+def cluster_flow(flow: np.ndarray, mask: np.ndarray, min_distance:float=1, niter:int=10, dt = .1, atol=1e-2):
     points = np.stack(np.where(mask), -1) 
     if len(points)==0:
         return points, points 
