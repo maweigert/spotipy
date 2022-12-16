@@ -38,10 +38,14 @@ def read_coords_csv(fname: str):
     return points
 
 
-def _filter_shape(points,shape):
-    """  returns all points in x that are inside shape """
-    assert points.ndim==2 and points.shape[1]==2
-    idx = np.all(np.logical_and(points >= 0, points < np.array(shape)), axis=1)
+def _filter_shape(points, shape, idxr_array=None):
+    """  returns all values in "points" that are inside the shape as given by the indexer array
+         if the indexer array is None, then the array to be filtered itself is used
+    """
+    if idxr_array is None:
+        idxr_array = points.copy()
+    assert idxr_array.ndim==2 and idxr_array.shape[1]==2
+    idx = np.all(np.logical_and(idxr_array >= 0, idxr_array < np.array(shape)), axis=1)
     return points[idx]
 
 def points_to_prob(points, shape, sigma = 1.5,  mode = "max"):

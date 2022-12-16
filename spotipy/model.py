@@ -187,7 +187,7 @@ class AccuracyCallback(tf.keras.callbacks.Callback):
 
         self.accs.append(ac)
 
-        spot_prob = np.concatenate(tuple(details.prob[tuple(p1.T)] for p1, details in zip(p_gt, p_details)), axis=0)
+        spot_prob = np.concatenate(tuple(details.heatmap[tuple(p1.T)] for p1, details in zip(p_gt, p_details)), axis=0)
         spot_prob = spot_prob.mean()
 
         print(p_pred[0].shape)
@@ -725,8 +725,8 @@ class SpotNet(CARE):
             if return_prob:
                 y = np.empty(x.shape[:2], np.float32)
 
-            points = [] 
-
+            points = []
+            probs = []
             iter_tiles = tile_iterator(x, n_tiles  = n_tiles +(1,),
                                  block_sizes = div_by,
                                  n_block_overlaps= (2,2,0))
@@ -740,14 +740,15 @@ class SpotNet(CARE):
                 if callable(normalizer):
                     tile = normalizer(tile)
                 y_tile = self._predict_prob(tile, verbose=False)
-                y_tile_sub = y_tile[s_src[:2]] 
+                y_tile_sub = y_tile[s_src[:2]]
 
                 if return_prob:
                     y[s_dst[:2]] = y_tile_sub
 
                 p = prob_to_points(y_tile_sub, prob_thresh=prob_thresh, subpix=subpix, min_distance=min_distance)
+                probs += y_tile_sub[tuple(p.T)].tolist()
                 p += np.array([s.start for s in s_dst[:2]])[None]
-                points.append(p) 
+                points.append(p)
 
             if return_prob:
                 if scale is not None:
@@ -756,12 +757,16 @@ class SpotNet(CARE):
                 y = center_crop(y, img.shape[:2])
 
             points = np.concatenate(points, axis=0)
-            points = _filter_shape(points, img.shape[:2])
-        
+
+            probs = np.array(probs)
+            probs = _filter_shape(probs, img.shape[:2], idxr_array=points)
+
+            points = _filter_shape(points, img.shape[:2], idxr_array=points)
+
         if verbose: print(f"detected {len(points)} points")
 
         if return_prob:
-            details = SimpleNamespace(prob = y)
+            details = SimpleNamespace(prob = probs, heatmap = y)
         else: 
             details = SimpleNamespace()
 
