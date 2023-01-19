@@ -16,7 +16,7 @@ class build_ext_openmp(build_ext):
     openmp_compile_args = {
         'msvc':  [['/openmp']],
         'intel': [['-qopenmp']],
-        '*':     [['-fopenmp'], ['-Xpreprocessor','-fopenmp']],
+        '*':     [['-fopenmp'], ['-O3', '-Xpreprocessor','-fopenmp']],
     }
     openmp_link_args = openmp_compile_args # ?
 
@@ -43,16 +43,20 @@ class build_ext_openmp(build_ext):
         _extra_compile_args = list(ext.extra_compile_args)
         _extra_link_args    = list(ext.extra_link_args)
 
+        
         # try compiler-specific flag(s) to enable openmp
         for compile_args, link_args in zip(self.openmp_compile_args[compiler], self.openmp_link_args[compiler]):
+            
             try:
                 ext.extra_compile_args = _extra_compile_args + compile_args
                 ext.extra_link_args    = _extra_link_args    + link_args
+                print('>>> try building with OpenMP support: ', compile_args, link_args)
                 return super(build_ext_openmp, self).build_extension(ext)
             except:
                 print(f">>> compiling with '{' '.join(compile_args)}' failed")
 
         print('>>> compiling with OpenMP support failed, re-trying without')
+
         ext.extra_compile_args = _extra_compile_args
         ext.extra_link_args    = _extra_link_args
         return super(build_ext_openmp, self).build_extension(ext)

@@ -83,6 +83,7 @@ static PyObject *c_gaussian2d(PyObject *self, PyObject *args)
 
     dst = (PyArrayObject *)PyArray_SimpleNew(2, dims_dst, NPY_FLOAT32);
 
+    
     // build kdtree
 
     PointCloud2D<float> cloud;
@@ -108,6 +109,7 @@ static PyObject *c_gaussian2d(PyObject *self, PyObject *args)
 
     index.buildIndex();
 
+    
     const float sigma_denom = 2 * sigma * sigma;
 
 #ifdef __APPLE__
@@ -121,17 +123,16 @@ static PyObject *c_gaussian2d(PyObject *self, PyObject *args)
         {
 
             // get the closest point
-            size_t num_results = 1;
             const float query_pt[2] = {(float)j, (float)i};
-            std::vector<unsigned long> ret_index(num_results);
-            std::vector<float> out_dist_sqr(num_results);
+            unsigned long ret_index;
+            float out_dist_sqr;
 
-            num_results = index.knnSearch(
-                &query_pt[0], num_results, &ret_index[0], &out_dist_sqr[0]);
+            index.knnSearch(
+                &query_pt[0], 1, &ret_index, &out_dist_sqr);
 
             // the coords of the closest point
-            const float px = cloud.pts[ret_index[0]].x;
-            const float py = cloud.pts[ret_index[0]].y;
+            const float px = cloud.pts[ret_index].x;
+            const float py = cloud.pts[ret_index].y;
 
             const float y = py - i;
             const float x = px - j;
@@ -140,6 +141,8 @@ static PyObject *c_gaussian2d(PyObject *self, PyObject *args)
 
             // the gaussian value
             const float val = exp(-r2 / sigma_denom);
+
+            // const float val = 0;
             
             *(float *)PyArray_GETPTR2(dst, i, j) = val;
         }
@@ -207,17 +210,16 @@ static PyObject *c_spotflow2d(PyObject *self, PyObject *args)
         {
 
             // get the closest point
-            size_t num_results = 1;
             const float query_pt[2] = {(float)j, (float)i};
-            std::vector<unsigned long> ret_index(num_results);
-            std::vector<float> out_dist_sqr(num_results);
+            unsigned long ret_index;
+            float out_dist_sqr;
 
-            num_results = index.knnSearch(
-                &query_pt[0], num_results, &ret_index[0], &out_dist_sqr[0]);
+            index.knnSearch(
+                &query_pt[0], 1, &ret_index, &out_dist_sqr);
 
             // the coords of the closest point
-            const float px = cloud.pts[ret_index[0]].x;
-            const float py = cloud.pts[ret_index[0]].y;
+            const float px = cloud.pts[ret_index].x;
+            const float py = cloud.pts[ret_index].y;
 
             const float y = py - i;
             const float x = px - j;

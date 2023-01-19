@@ -159,16 +159,18 @@ class AccuracyCallback(tf.keras.callbacks.Callback):
         self.spot_model = spot_model
         self.tb_callback = tb_callback
         self.accs = []
+        self.f1s = []
 
     def on_epoch_end(self, epoch, logs={}):
         p_pred, p_details  = tuple(zip(*tuple(self.spot_model.predict(x, verbose=False, return_details=True) for x in self.X)))
         
-        stats = tuple(points_matching(p1,p2) for p1,p2 in zip(self.P, p_pred))
+        stats = tuple(points_matching(p1,p2, cutoff_distance=3) for p1,p2 in zip(self.P, p_pred))
         
-        ac = np.mean(tuple(s.accuracy for s in stats))
+        ac = np.mean(tuple(s.accuracy for s in stats))  
         f1 = np.mean(tuple(s.f1 for s in stats))
 
         self.accs.append(ac)
+        self.f1s.append(f1)
 
         spot_prob = np.concatenate(tuple(details.prob[tuple(p1.T.astype(int))] for p1, details in zip(self.P, p_details)), axis=0)
         spot_prob = spot_prob.mean()
@@ -179,12 +181,12 @@ class AccuracyCallback(tf.keras.callbacks.Callback):
             
         if self.tb_callback is not None:
             with self.tb_callback._writers["val"].as_default():
-                tf.summary.scalar('val_accuracy', ac, step=epoch)
+                tf.summary.scalar('val_F1', f1, step=epoch)
                 tf.summary.scalar('val_spot_prob', spot_prob, step=epoch)
 
 
 class Config(CareConfig):
-    def __init__(self,axes = "YX", mode = "bce", n_channel_in = 1, remove_bkg = False, spot_sigma=1.5, spot_mode='max', unet_n_depth = 3, spot_weight = 5,  spot_weight_decay=.1 , backbone="unet", activation="relu", last_activation="sigmoid", train_batch_norm=False, fuse_heads=False, train_foreground_prob=.3, multiscale=True, train_patch_size=(256,256), train_multiscale_loss_decay_exponent=2, **kwargs):
+    def __init__(self,axes = "YX", mode = "bce", n_channel_in = 1, remove_bkg = False, spot_sigma=1.5, spot_mode='max', unet_n_depth = 3, spot_weight = 5,  spot_weight_decay=.1 , backbone="unet", activation="relu", last_activation="sigmoid", train_batch_norm=False, fuse_heads=False, foreground_prob=.3, multiscale=True, patch_size=(256,256), multiscale_loss_decay_exponent=2, **kwargs):
         kwargs.setdefault("train_batch_size",2)
         kwargs.setdefault("train_reduce_lr", {'factor': 0.5, 'patience': 40})
         kwargs.setdefault("n_channel_in",n_channel_in)
@@ -195,13 +197,14 @@ class Config(CareConfig):
         kwargs.setdefault("mode", mode)
         super().__init__(axes=axes, unet_n_depth=unet_n_depth,
                          allow_new_parameters=True, **kwargs)
-        self.train_spot_weight = spot_weight
-        self.train_spot_sigma = spot_sigma
-        self.train_spot_mode = spot_mode
-        self.train_patch_size = train_patch_size
-        self.train_spot_weight_decay = spot_weight_decay
-        self.train_multiscale_loss_decay_exponent = train_multiscale_loss_decay_exponent
-        self.train_foreground_prob = train_foreground_prob
+        self.spot_weight = spot_weight
+        self.spot_sigma = spot_sigma
+        self.spot_mode = spot_mode
+        self.spot_weight_decay = spot_weight_decay
+        self.multiscale_loss_decay_exponent = multiscale_loss_decay_exponent
+
+        self.patch_size = patch_size
+        self.foreground_prob = foreground_prob
         self.train_batch_norm      = train_batch_norm
         self.multiscale = multiscale
         self.fuse_heads = fuse_heads
@@ -271,16 +274,16 @@ class SpotNetData(RollingSequence):
         idx = self.batch(i)
 
         X, P = tuple(zip(*tuple(self._sample_patch(k) for k in idx)))
-
+        
         if self.augmenter is not None:
-            X = tuple(self.augmenter(x) for x in X)
+            X, P = tuple(zip(*tuple(self.augmenter(x, p) for x, p in zip(X, P))))
 
         if self.mode == 'flow':
             F = tuple(points_to_flow(p, x.shape[:2], sigma=self.sigma) for x, p in zip(X,P))
         elif self.mode == 'max':
-            F = tuple(points_to_prob(p, x.shape[:2], mode='max', sigma=self.sigma) for x, p in zip(X,P))
+            F = tuple(np.expand_dims(points_to_prob(p, x.shape[:2], mode='max', sigma=self.sigma), -1) for x, p in zip(X,P))
         elif self.mode == 'sum':
-            F = tuple(points_to_prob(p, x.shape[:2], mode='sum', sigma=self.sigma) for x, p in zip(X,P))
+            F = tuple(np.expand_dims(points_to_prob(p, x.shape[:2], mode='sum', sigma=self.sigma), -1) for x, p in zip(X,P))
         else: 
             raise NotImplementedError(f'unknown mode {self.mode}')
 
@@ -332,8 +335,10 @@ class SpotNet(CARE):
                     print("Couldn't load thresholds from 'thresholds.json', using default values. "
                           "(Call 'optimize_thresholds' to change that.)")
 
+        default_thresh = 0 if self.config.spot_mode == 'flow' else 0.5
+
         self.thresholds = dict (
-            prob = 0 if threshs['prob'] is None else threshs['prob'],
+            prob = default_thresh if threshs['prob'] is None else threshs['prob'],
         )
         print("Loaded/default threshold values: prob_thresh={prob:g}".format(prob=self.thresholds.prob))
 
@@ -416,12 +421,12 @@ class SpotNet(CARE):
             if self.config.backbone=='unet':
                 model = custom_unet((None,None,self.config.n_channel_in),
                            n_depth=self.config.unet_n_depth,
-                           n_channel_out=3 if self.config.train_spot_mode == 'flow' else 1,
+                           n_channel_out=3 if self.config.spot_mode == 'flow' else 1,
                            n_filter_base=self.config.unet_n_filter_base,
                            kernel_size = (self.config.unet_kern_size,)*2,
                            activation=self.config.activation,
                            pool_size=(self.config.unet_pool,self.config.unet_pool),
-                           last_activation='linear' if self.config.train_spot_mode == 'flow' else 'sigmoid')
+                           last_activation='linear' if self.config.spot_mode == 'flow' else 'sigmoid')
                 
             elif self.config.backbone=='hrnet':
                 model = hrnet((None,None,self.config.n_channel_in), n_channel_out=1)
@@ -436,7 +441,7 @@ class SpotNet(CARE):
         else: 
             out = model(inp)
 
-        if self.config.train_spot_mode=='flow':
+        if self.config.spot_mode=='flow':
             out = tf.keras.layers.Lambda(lambda x: tf.keras.backend.l2_normalize(x, axis=-1))(out)
 
         model = tf.keras.models.Model(inp, out)
@@ -483,7 +488,7 @@ class SpotNet(CARE):
             optimizer = tf.keras.optimizers.Adam(learning_rate=self.config.train_learning_rate)
         # self.keras_model.compile(optimizer, loss="binary_crossentropy")
 
-        weight = tf.keras.backend.variable(self.config.train_spot_weight)
+        weight = tf.keras.backend.variable(self.config.spot_weight)
 
         if self.config.mode == "bce":
             loss = [weighted_bce_loss(weight)]
@@ -516,7 +521,7 @@ class SpotNet(CARE):
  
         self.callbacks = []
 
-        self.callbacks.append(ParameterDecayCallback(weight, self.config.train_spot_weight_decay, name='extra_spot_weight', verbose=True))
+        self.callbacks.append(ParameterDecayCallback(weight, self.config.spot_weight_decay, name='extra_spot_weight', verbose=True))
 
         self.tb_callback = None
         if self.basedir is not None:
@@ -594,16 +599,18 @@ class SpotNet(CARE):
         self.data = SpotNetData(X, P,
                                 augmenter = augmenter,
                                 shuffle=True,
+                                spot_mode=self.config.spot_mode,
                                 length = epochs*steps_per_epoch,
-                                sigma=self.config.train_spot_sigma,
-                                patch_size=self.config.train_patch_size,
+                                sigma=self.config.spot_sigma,
+                                patch_size=self.config.patch_size,
                                 batch_size=self.config.train_batch_size)
         
         _data_val = SpotNetData(Xv, Pv,
                                 batch_size=max(16,len(Xv)), length=1,
                                 shuffle=False,
-                                patch_size=self.config.train_patch_size,
-                                sigma=self.config.train_spot_sigma,
+                                spot_mode=self.config.spot_mode,
+                                patch_size=self.config.patch_size,
+                                sigma=self.config.spot_sigma,
                                 )
         validation_data = _data_val[0]
 
@@ -655,7 +662,10 @@ class SpotNet(CARE):
         u = self.keras_model.predict(x[np.newaxis], **kwargs)
         if self.config.multiscale:
             u = u[-1] 
-        u = u / (np.linalg.norm(u, axis=-1, keepdims=True)+1e-7)
+
+        if self.config.spot_mode=='flow':
+            u = u / (np.linalg.norm(u, axis=-1, keepdims=True)+1e-7)
+
         return u[0,...,0]
 
     
@@ -692,7 +702,7 @@ class SpotNet(CARE):
             y = center_crop(y, img.shape[:2])
             if verbose: print(f"peak detection with prob_thresh={prob_thresh:.2f}, subpix={subpix}, min_distance={min_distance} ...")
             points = prob_to_points(y, prob_thresh=prob_thresh, subpix=subpix, min_distance=min_distance)
-                        
+            points = _filter_shape(points, img.shape[:2])                       
         else:
             # output array
             if return_details:
@@ -761,8 +771,6 @@ class SpotNet(CARE):
         if optimize_kwargs is None:
             optimize_kwargs = {}
 
-        Y_val = [points_to_prob(p, x.shape[:2], sigma=self.config.train_spot_sigma) for x, p in zip(X_val, P_val)]
-
         def _pad_dims(x):
             return (x if x.ndim==3 else np.expand_dims(x,-1))
         X_val = map(_pad_dims,X_val)
@@ -771,7 +779,7 @@ class SpotNet(CARE):
 
         
 
-        opt_prob_thresh, opt_measure = optimize_threshold(Y_val, Yhat_val, verbose=verbose, **optimize_kwargs)
+        opt_prob_thresh, opt_measure = optimize_threshold(P_val, Yhat_val, verbose=verbose, **optimize_kwargs)
 
        
         opt_threshs = dict(prob=opt_prob_thresh)

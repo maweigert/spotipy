@@ -1,3 +1,4 @@
+from timeit import default_timer
 import numpy as np
 from spotipy.utils import points_to_prob
 import networkx as nx
@@ -6,43 +7,56 @@ from scipy.ndimage import gaussian_filter
 from spotipy.utils import points_to_flow, cluster_flow, points_to_prob, prob_to_points, points_matching
 
 
+def test_speed():
+    N = 2**13
+    
+    p = np.random.uniform(10,N-10,(100,2))
+
+    t = default_timer() 
+    points_to_prob(p, (N,N), mode='max', sigma=1)
+    print(f'points_to_prob: {default_timer()-t:.2f}s')
+
+
 
 
 if __name__ == '__main__':
 
-    np.random.seed(42) 
+    test_speed()
 
-    N = 128
+
+    # np.random.seed(42) 
+
+    # N = 128
     
-    p0 = np.random.uniform(10,N-10,(N**2//40,2))
+    # p0 = np.random.uniform(10,N-10,(N**2//40,2))
 
-    # p0 = np.random.uniform(10,N-10,(2,2))
+    # # p0 = np.random.uniform(10,N-10,(2,2))
 
-    # dp = .6
-    # dp = 1.
-    # p0 = np.array([[N/2, N/2-dp], [N/2, N/2+dp]]) + .1*np.random.uniform(-1,1,(2,2))
-    # p0 = np.array([[N/2-dp, N/2], [N/2+dp, N/2]]) + .1*np.random.uniform(-1,1,(2,2))
+    # # dp = .6
+    # # dp = 1.
+    # # p0 = np.array([[N/2, N/2-dp], [N/2, N/2+dp]]) + .1*np.random.uniform(-1,1,(2,2))
+    # # p0 = np.array([[N/2-dp, N/2], [N/2+dp, N/2]]) + .1*np.random.uniform(-1,1,(2,2))
     
 
-    u0 = points_to_prob(p0, (N,N), sigma=1)
+    # u0 = points_to_prob(p0, (N,N), sigma=1)
 
-    u = points_to_flow(p0, (N,N), sigma=1)
+    # u = points_to_flow(p0, (N,N), sigma=1)
 
-    thresh = .3
-    p1 = prob_to_points(u[...,0], prob_thresh=thresh, min_distance=1)
+    # thresh = .3
+    # p1 = prob_to_points(u[...,0], prob_thresh=thresh, min_distance=1)
 
-    # p2, p2_full = cluster_flow(u, u[...,0]>thresh, niter=40, dt=.1)
-    p2, p2_full = cluster_flow(u, u[...,0]>thresh, niter=300, dt=.1, atol=0.2)
+    # # p2, p2_full = cluster_flow(u, u[...,0]>thresh, niter=40, dt=.1)
+    # p2, p2_full = cluster_flow(u, u[...,0]>thresh, niter=300, dt=.1, atol=0.2)
 
 
-    s1 = points_matching(p0,p1,cutoff_distance=1)
-    s2 = points_matching(p0,p2,cutoff_distance=1)
+    # s1 = points_matching(p0,p1,cutoff_distance=1)
+    # s2 = points_matching(p0,p2,cutoff_distance=1)
 
-    print(f'{s1.f1:.4f}') 
-    print(f'{s2.f1:.4f}')
+    # print(f'{s1.f1:.4f}') 
+    # print(f'{s2.f1:.4f}')
 
-    p = np.stack([cluster_flow(u, u[...,0]>thresh, niter=n, dt=.1, atol=1e-3)[1] for n in range(100)], 0)
-    pp = np.concatenate([np.concatenate((i*np.ones((len(_p),1)), _p), -1) for i,_p in enumerate(p)], 0)
+    # p = np.stack([cluster_flow(u, u[...,0]>thresh, niter=n, dt=.1, atol=1e-3)[1] for n in range(100)], 0)
+    # pp = np.concatenate([np.concatenate((i*np.ones((len(_p),1)), _p), -1) for i,_p in enumerate(p)], 0)
 
 
 # napclf()

@@ -286,7 +286,7 @@ def voronoize_from_prob(prob,prob_thresh =0.9):
     return dist_closest
 
 
-def optimize_threshold(Y, Yhat, measure='f1', bracket=(0.3, 0.7), tol=1e-4, maxiter=80, verbose=1):
+def optimize_threshold(P, Yhat, measure='f1', bracket=(0.3, 0.7), tol=1e-4, maxiter=80, verbose=1):
     values = dict()
 
     if bracket is None:
@@ -294,7 +294,6 @@ def optimize_threshold(Y, Yhat, measure='f1', bracket=(0.3, 0.7), tol=1e-4, maxi
     print("bracket =", bracket)
     values = dict()
 
-    p_gt = tuple(prob_to_points(y, prob_thresh=0.95, min_distance=1) for y in Y)
 
     with tqdm(total=maxiter, disable=(verbose!=1)) as progress:
 
@@ -303,10 +302,8 @@ def optimize_threshold(Y, Yhat, measure='f1', bracket=(0.3, 0.7), tol=1e-4, maxi
             value = values.get(prob_thresh)
             if value is None:
                 p_pred = tuple(prob_to_points(y, prob_thresh=prob_thresh) for y in Yhat)
-
-                # value = np.mean(tuple(points_matching(p1,p2)._asdict()[measure] for p1,p2 in zip(p_gt, p_pred)))
-
-                value = np.mean(tuple(vars(points_matching(p1,p2))[measure] for p1,p2 in zip(p_gt, p_pred)))
+                
+                value = np.mean(tuple(vars(points_matching(p1,p2))[measure] for p1,p2 in zip(P, p_pred)))
 
                 values[prob_thresh]=value
             if verbose > 1:
