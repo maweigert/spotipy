@@ -2,7 +2,7 @@ import numpy as np
 import warnings
 import datetime
 import warnings
-from csbdeep.utils import normalize
+from csbdeep.utils import normalize, normalize_mi_ma
 from scipy.ndimage.filters import gaussian_filter
 from scipy.ndimage import map_coordinates, zoom
 from scipy.optimize import minimize_scalar
@@ -406,6 +406,26 @@ def str2scalar(dtype):
             return dtype(v)
 
     return _f
+
+
+def normalize(x: np.ndarray, pmin=1, pmax=99.8, subsample:int = 1, clip = False, ignore_val=None):
+    """
+    normalizes a 2d image with the additional option to ignore a value
+    """
+
+    # create subsampled version to compute percentiles
+    ss_sample = tuple(slice(None,None, subsample) if s>42*subsample else slice(None,None) for s in x.shape)
+
+    y = x[ss_sample]
+
+    if ignore_val is not None:
+        mask = y!=ignore_val
+    else: 
+        mask = np.ones(y.shape, dtype=np.bool)
+
+    mi, ma = np.percentile(y[mask],(pmin, pmax))
+
+    return normalize_mi_ma(x, mi, ma, clip=clip)    
 
 
 
