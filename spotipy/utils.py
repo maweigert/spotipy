@@ -423,8 +423,10 @@ def normalize(x: np.ndarray, pmin=1, pmax=99.8, subsample:int = 1, clip = False,
     else: 
         mask = np.ones(y.shape, dtype=np.bool)
 
-    mi, ma = np.percentile(y[mask],(pmin, pmax))
+    if not np.any(mask):
+        return normalize_mi_ma(x, ignore_val, ignore_val, clip=clip)
 
+    mi, ma = np.percentile(y[mask],(pmin, pmax))
     return normalize_mi_ma(x, mi, ma, clip=clip)    
 
 
