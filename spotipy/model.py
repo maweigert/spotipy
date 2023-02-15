@@ -178,7 +178,7 @@ class AccuracyCallback(tf.keras.callbacks.Callback):
             p_gt = tuple(prob_to_points(y[...,0], prob_thresh=0.95, min_distance=0) for y in Y)
             
         
-        p_pred, p_details  = tuple(zip(*tuple(self.spot_model.predict(x, verbose=False, return_prob=True) for x in X)))
+        p_pred, p_details  = tuple(zip(*tuple(self.spot_model.predict(x, verbose=False, return_details=True) for x in X)))
         
         stats = tuple(points_matching(p1,p2) for p1,p2 in zip(p_gt, p_pred) if len(p_gt)>0)
         
@@ -687,7 +687,7 @@ class SpotNet(CARE):
 
     
     def predict(self, img, prob_thresh=None, n_tiles=(1,1), subpix = False, min_distance=2, scale = None, 
-                    normalizer=None, return_prob = False,
+                    normalizer=None, return_details = False,
                     verbose=True, show_tile_progress=False):
 
         if img.ndim==2:
@@ -722,11 +722,10 @@ class SpotNet(CARE):
                         
         else:
             # output array
-            if return_prob:
+            if return_details:
                 y = np.empty(x.shape[:2], np.float32)
 
             points = []
-            probs = []
             iter_tiles = tile_iterator(x, n_tiles  = n_tiles +(1,),
                                  block_sizes = div_by,
                                  n_block_overlaps= (2,2,0))
@@ -742,30 +741,27 @@ class SpotNet(CARE):
                 y_tile = self._predict_prob(tile, verbose=False)
                 y_tile_sub = y_tile[s_src[:2]]
 
-                if return_prob:
+                if return_details:
                     y[s_dst[:2]] = y_tile_sub
 
                 p = prob_to_points(y_tile_sub, prob_thresh=prob_thresh, subpix=subpix, min_distance=min_distance)
-                probs += y_tile_sub[tuple(p.T)].tolist()
                 p += np.array([s.start for s in s_dst[:2]])[None]
                 points.append(p)
 
-            if return_prob:
+            if return_details:
                 if scale is not None:
                     print('zooming')
                     y = zoom(y, (1./scale,1./scale), order=1)
                 y = center_crop(y, img.shape[:2])
 
             points = np.concatenate(points, axis=0)
-
-            probs = np.array(probs)
-            probs = _filter_shape(probs, img.shape[:2], idxr_array=points)
-
             points = _filter_shape(points, img.shape[:2], idxr_array=points)
 
         if verbose: print(f"detected {len(points)} points")
 
-        if return_prob:
+        probs = y[tuple(points.T)]
+
+        if return_details:
             details = SimpleNamespace(prob = probs, heatmap = y)
         else: 
             details = SimpleNamespace()
