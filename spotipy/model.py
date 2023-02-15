@@ -708,9 +708,12 @@ class SpotNet(CARE):
         div_by = self._axes_div_by("YXC")
         pad_shape = tuple(int(d*np.ceil(s/d)) for s,d in zip(x.shape, div_by))
         if verbose: print(f"padding to shape {pad_shape}")
-        x = center_pad(x, pad_shape, mode="constant")
+        x = center_pad(x, pad_shape, mode="reflect")
 
         if all(n<=1 for n in n_tiles):
+            if callable(normalizer):
+                x = normalizer(x)
+
             y = self._predict_prob(x, verbose=verbose)
             if scale is not None:
                 print('zooming')
