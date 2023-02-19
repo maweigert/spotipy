@@ -762,9 +762,8 @@ class SpotNet(CARE):
 
         if verbose: print(f"detected {len(points)} points")
 
-        probs = y[tuple(points.T)]
-
         if return_details:
+            probs = y[tuple(points.T)]
             details = SimpleNamespace(prob = probs, heatmap = y)
         else: 
             details = SimpleNamespace()
