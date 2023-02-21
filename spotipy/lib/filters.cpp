@@ -70,9 +70,14 @@ static PyObject *c_maximum_filter_2d_float(PyObject *self, PyObject *args)
 
     PyArrayObject *src = NULL;
     int kernel_size;
+    int max_threads;
 
-    if (!PyArg_ParseTuple(args, "O!i", &PyArray_Type, &src, &kernel_size))
+    if (!PyArg_ParseTuple(args, "O!ii", &PyArray_Type, &src, &kernel_size, &max_threads))
         return NULL;
+
+#ifdef _OPENMP
+    omp_set_num_threads(max_threads);
+#endif
 
     npy_intp *dims = PyArray_DIMS(src);
     const long Ny = dims[0];

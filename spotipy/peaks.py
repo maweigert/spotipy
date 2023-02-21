@@ -1,6 +1,16 @@
 import numpy as np
 import scipy.ndimage as ndi
 from skimage.feature.peak import _get_excluded_border_width, _get_threshold, _exclude_border
+import os
+
+def get_num_threads():
+    # set OMP_NUM_THREADS to 1/2 of the number of CPUs by default
+    n_cpu = os.cpu_count()
+    n_threads = int(os.environ.get("OMP_NUM_THREADS",n_cpu))
+    n_threads = max(1,min(n_threads, n_cpu//2))
+    return n_threads
+
+
 
 def nms_points_2d(points: np.ndarray, scores: np.ndarray = None, min_distance:int=2) -> np.ndarray:
     """Non-maximum suppression for 2D points, choosing the highest scoring points while 
@@ -52,7 +62,8 @@ def maximum_filter_2d(image:np.ndarray, kernel_size:int=3) -> np.ndarray:
         raise ValueError("kernel_size must be positive and odd")
 
     image = np.ascontiguousarray(image, dtype=np.float32)
-    return c_maximum_filter_2d_float(image, np.int32(kernel_size//2))
+    n_threads = get_num_threads()
+    return c_maximum_filter_2d_float(image, np.int32(kernel_size//2), np.int32(n_threads))
 
 
 def local_peaks(image:np.ndarray, min_distance=1, exclude_border=True, threshold_abs=None, threshold_rel=None):
@@ -65,7 +76,7 @@ def local_peaks(image:np.ndarray, min_distance=1, exclude_border=True, threshold
     threshold = _get_threshold(image, threshold_abs, threshold_rel)
 
     image = image.astype(np.float32)
-    
+
     if min_distance<=0:
         mask = image > threshold
     else:
