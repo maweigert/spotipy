@@ -56,6 +56,7 @@ class build_ext_openmp(build_ext):
             except:
                 print(f">>> compiling with '{' '.join(compile_args)}' failed")
 
+        print("XXXX\nYYYY"*10)
         print('>>> compiling with OpenMP support failed, re-trying without')
 
         ext.extra_compile_args = _extra_compile_args
@@ -91,6 +92,12 @@ setup(
             sources = ['spotipy/lib/point_nms.cpp'],
             extra_compile_args = ['-std=c++11'],
             include_dirs = get_numpy_include_dirs() + [nanoflann_root],
+        ),
+        Extension(
+            'spotipy.lib.filters',
+            sources = ['spotipy/lib/filters.cpp'],
+            extra_compile_args = ['-std=c++11'],
+            include_dirs = get_numpy_include_dirs() ,
         )
     ],
 

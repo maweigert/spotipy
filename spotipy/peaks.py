@@ -1,8 +1,6 @@
 import numpy as np
 import scipy.ndimage as ndi
 from skimage.feature.peak import _get_excluded_border_width, _get_threshold, _exclude_border
-from spotipy.lib.point_nms import c_point_nms_2d
-
 
 def nms_points_2d(points: np.ndarray, scores: np.ndarray = None, min_distance:int=2) -> np.ndarray:
     """Non-maximum suppression for 2D points, choosing the highest scoring points while 
@@ -23,6 +21,8 @@ def nms_points_2d(points: np.ndarray, scores: np.ndarray = None, min_distance:in
     np.ndarray
         Array of shape (N,) containing the indices of the points that survived the filtering.
     """
+    from spotipy.lib.point_nms import c_point_nms_2d
+
     points = np.asarray(points)
     if not points.ndim == 2 and points.shape[1] == 2:
         raise ValueError("points must be a array of shape (N,2)")
@@ -43,6 +43,18 @@ def nms_points_2d(points: np.ndarray, scores: np.ndarray = None, min_distance:in
 
 
 
+def maximum_filter_2d(image:np.ndarray, kernel_size:int=3) -> np.ndarray:
+    from spotipy.lib.filters import c_maximum_filter_2d_float
+
+    if not image.ndim==2:
+        raise ValueError("Image must be 2D")
+    if not kernel_size>0 and kernel_size%2==1:
+        raise ValueError("kernel_size must be positive and odd")
+
+    image = np.ascontiguousarray(image, dtype=np.float32)
+    return c_maximum_filter_2d_float(image, np.int32(kernel_size//2))
+
+
 def local_peaks(image:np.ndarray, min_distance=1, exclude_border=True, threshold_abs=None, threshold_rel=None):
     if not image.ndim==2 and not image.ndim==2:
         raise ValueError("Image must be 2D")
@@ -52,11 +64,12 @@ def local_peaks(image:np.ndarray, min_distance=1, exclude_border=True, threshold
     border_width = _get_excluded_border_width(image, min_distance, exclude_border)
     threshold = _get_threshold(image, threshold_abs, threshold_rel)
 
-    #    mask = _get_peak_mask(image, footprint, threshold)
+    image = image.astype(np.float32)
+    
     if min_distance<=0:
         mask = image > threshold
     else:
-        mask = ndi.maximum_filter(image, 2*min_distance+1, mode='nearest') == image
+        mask = maximum_filter_2d(image, 2*min_distance+1) == image
         
         # no peak for a trivial image
         image_is_trivial = np.all(mask) 
