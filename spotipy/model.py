@@ -687,7 +687,7 @@ class SpotNet(CARE):
 
     
     def predict(self, img, prob_thresh=None, n_tiles=(1,1), subpix = False, min_distance=2, scale = None, 
-                    normalizer=None, return_details = False,
+                    normalizer=None, return_details = False, peak_mode='skimage',
                     verbose=True, show_tile_progress=False):
 
         if img.ndim==2:
@@ -721,7 +721,7 @@ class SpotNet(CARE):
                     
             y = center_crop(y, img.shape[:2])
             if verbose: print(f"peak detection with prob_thresh={prob_thresh:.2f}, subpix={subpix}, min_distance={min_distance} ...")
-            points = prob_to_points(y, prob_thresh=prob_thresh, subpix=subpix, min_distance=min_distance)
+            points = prob_to_points(y, prob_thresh=prob_thresh, subpix=subpix, min_distance=min_distance, mode=peak_mode)
                         
         else:
             # output array
@@ -753,7 +753,7 @@ class SpotNet(CARE):
 
             if return_details:
                 if scale is not None:
-                    print('zooming')
+                    if verbose: print('zooming')
                     y = zoom(y, (1./scale,1./scale), order=1)
                 y = center_crop(y, img.shape[:2])
 

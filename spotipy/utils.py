@@ -2,20 +2,18 @@ import numpy as np
 import warnings
 import datetime
 import warnings
-from csbdeep.utils import normalize, normalize_mi_ma
-from scipy.ndimage.filters import gaussian_filter
+from csbdeep.utils import normalize_mi_ma
 from scipy.ndimage import map_coordinates, zoom
 from scipy.optimize import minimize_scalar
-from skimage.measure import regionprops, label
 from skimage.feature import corner_peaks, corner_subpix
-from stardist.matching import matching
+import scipy.ndimage as ndi
 from skimage.draw import disk
-from collections import namedtuple
 from tqdm import tqdm
 import networkx as nx
 from scipy.spatial.distance import cdist
 from types import SimpleNamespace
 import pandas as pd
+from .peaks import local_peaks
 
 
 def read_coords_csv(fname: str): 
@@ -72,7 +70,7 @@ def points_to_prob(points, shape, sigma = 1.5,  mode = "max"):
             inds = nx.maximal_independent_set(G)
             gauss = np.zeros(shape, np.float32)
             gauss[tuple(points[inds].T)] = 1
-            g = gaussian_filter(gauss, sigma, mode=  "constant")
+            g = ndi.gaussian_filter(gauss, sigma, mode=  "constant")
             g /= np.max(g)
             x = np.maximum(x,g)
             G.remove_nodes_from(inds)
@@ -81,7 +79,7 @@ def points_to_prob(points, shape, sigma = 1.5,  mode = "max"):
         x = np.zeros(shape, np.float32)
         for px, py in points:
             x[px, py] = 1
-        x = sigma**2*2.*np.pi*gaussian_filter(x, sigma, mode=  "constant")
+        x = sigma**2*2.*np.pi*ndi.gaussian_filter(x, sigma, mode=  "constant")
         x = np.clip(x,0,1)
         
     elif mode =="dist":
@@ -98,16 +96,20 @@ def points_to_prob(points, shape, sigma = 1.5,  mode = "max"):
     return x
 
 
-def prob_to_points(prob, prob_thresh=.5, min_distance = 2, subpix=False):
+def prob_to_points(prob, prob_thresh=.5, min_distance = 2, subpix=False, mode='skimage'):
     assert prob.ndim==2, "Wrong dimension of prob"
 
-    corners = corner_peaks(prob, min_distance = min_distance, threshold_abs = prob_thresh, threshold_rel=0)
-    if subpix:
-        print("using subpix")
-        corners_sub = corner_subpix(prob, corners, window_size=3)
-        ind = ~np.isnan(corners_sub[:,0])
-        corners[ind] = corners_sub[ind].round().astype(int)
-        
+    if mode =='skimage':
+        corners = corner_peaks(prob, min_distance = min_distance, threshold_abs = prob_thresh, threshold_rel=0)
+        if subpix:
+            print("using subpix")
+            corners_sub = corner_subpix(prob, corners, window_size=3)
+            ind = ~np.isnan(corners_sub[:,0])
+            corners[ind] = corners_sub[ind].round().astype(int)
+    elif mode=='fast':
+        corners = local_peaks(prob, min_distance = min_distance, threshold_abs = prob_thresh)
+    else: 
+        raise NotImplementedError(f'unknown mode {mode} (supported: "skimage", "fast")')
     return corners
 
 def points_to_label(points, shape = None, max_distance=3):
@@ -232,9 +234,8 @@ def multiscale_decimate(y, decimate = (4,4), sigma = 1):
         return y
     assert y.ndim==len(decimate)
     from skimage.measure import block_reduce
-    from scipy.ndimage import gaussian_filter
     y = block_reduce(y, decimate, np.max)
-    y = 2*np.pi*sigma**2*gaussian_filter(y,sigma)
+    y = 2*np.pi*sigma**2*ndi.gaussian_filter(y,sigma)
     y = np.clip(y,0,1)
     return y
 
