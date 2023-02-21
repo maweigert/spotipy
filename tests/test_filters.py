@@ -6,7 +6,7 @@ from spotipy.peaks import maximum_filter_2d
 def test_maximum_filter():
 
     for kernel_size in (1,3,5):
-        for shape in ((11,16), (256,256), (1024,1024)):
+        for shape in ((11,16), (1024,512), (4096,4096)):
 
             print(f"kernel_size: {kernel_size}, shape: {shape}")
             x = np.random.uniform(0,100, shape).astype(np.float32)
