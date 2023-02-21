@@ -54,10 +54,10 @@ void _max_filter_vert(float *src, float * dst, const int kernel_size, const int 
 static PyObject *c_maximum_filter_2d_float(PyObject *self, PyObject *args)
 {
 
-#ifdef _OPENMP
-    const int nthreads = omp_get_max_threads();
-    std::cout << "Using " << nthreads << " thread(s)" << std::endl;
-#endif
+// #ifdef _OPENMP
+//     const int nthreads = omp_get_max_threads();
+//     std::cout << "Using " << nthreads << " thread(s)" << std::endl;
+// #endif
 
 // #ifdef __APPLE__
 // #pragma omp parallel for
