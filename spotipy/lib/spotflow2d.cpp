@@ -163,6 +163,12 @@ static PyObject *c_spotflow2d(PyObject *self, PyObject *args)
     if (!PyArg_ParseTuple(args, "O!iif", &PyArray_Type, &points, &shape_y, &shape_x, &scale))
         return NULL;
 
+    #ifdef _OPENMP
+    std::cout << "OpenMP is enabled" << std::endl;
+    #else  
+    std::cout << "OpenMP is disabled" << std::endl;
+    #endif
+
     npy_intp *dims = PyArray_DIMS(points);
 
     npy_intp dims_dst[3];
