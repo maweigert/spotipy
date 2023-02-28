@@ -163,11 +163,11 @@ static PyObject *c_spotflow2d(PyObject *self, PyObject *args)
     if (!PyArg_ParseTuple(args, "O!iif", &PyArray_Type, &points, &shape_y, &shape_x, &scale))
         return NULL;
 
-    #ifdef _OPENMP
-    std::cout << "OpenMP is enabled" << std::endl;
-    #else  
-    std::cout << "OpenMP is disabled" << std::endl;
-    #endif
+    // #ifdef _OPENMP
+    // std::cout << "OpenMP is enabled" << std::endl;
+    // #else  
+    // std::cout << "OpenMP is disabled" << std::endl;
+    // #endif
 
     npy_intp *dims = PyArray_DIMS(points);
 
@@ -383,11 +383,11 @@ static PyObject *c_cluster_flow2d(PyObject *self, PyObject *args)
 
         // std::cout << "i:   " << i << " coords[i].x: " << coords[i].x << " coords[i].y: " << coords[i].y << std::endl;
 
-#ifdef __APPLE__
-#pragma omp parallel for
-#else
-#pragma omp parallel for schedule(dynamic) reduction(+:new_weight) reduction(+:new_pos) reduction(+:new_pos)
-#endif
+// #ifdef __APPLE__
+// #pragma omp parallel for reduction(+:new_weight) reduction(+:new_pos)
+// #else
+// #pragma omp parallel for schedule(dynamic) reduction(+:new_weight) reduction(+:new_pos)
+// #endif
         for (long j = i + 1; j < coords.size(); j++){
             float dy = coords[i].y - coords[j].y;
             float dx = coords[i].x - coords[j].x;

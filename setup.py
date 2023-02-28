@@ -90,7 +90,8 @@ setup(
             'spotipy.lib.spotflow2d',
             sources = ['spotipy/lib/spotflow2d.cpp'],
             extra_compile_args = ['-std=c++11'],
-            include_dirs = get_numpy_include_dirs() + [nanoflann_root]),
+            include_dirs = get_numpy_include_dirs() + [nanoflann_root]
+            ),
 
         Extension(
             'spotipy.lib.point_nms',

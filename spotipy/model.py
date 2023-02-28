@@ -272,8 +272,10 @@ class SpotNetData(RollingSequence):
             X, P = tuple(zip(*tuple(self.augmenter(x, p) for x, p in zip(X, P))))
 
         F = tuple(points_to_flow(p, x.shape[:2], sigma=self.sigma) for x, p in zip(X,P))
-
         U = tuple(np.expand_dims(points_to_prob(p, x.shape[:2], mode=self.spot_mode, sigma=self.sigma), -1) for x, p in zip(X,P))
+
+        # F = tuple(np.zeros(x.shape[:2]+(3,)) for x in X)
+        # U = tuple(np.zeros(x.shape[:2]+(1,)) for x in X)
 
         X = np.stack(X)
         U = np.stack(U)
@@ -681,15 +683,12 @@ class SpotNet(CARE):
         if optimize_kwargs is None:
             optimize_kwargs = {}
 
-        Y_val = [points_to_prob(p, x.shape[:2], sigma=self.config.train_spot_sigma) for x, p in zip(X_val, P_val)]
-
         def _pad_dims(x):
             return (x if x.ndim==3 else np.expand_dims(x,-1))
+        
         X_val = map(_pad_dims,X_val)
         
         Yhat_val = [self._predict_prob(x) for x in X_val]
-
-        
 
         opt_prob_thresh, opt_measure = optimize_threshold(P_val, Yhat_val, verbose=verbose, **optimize_kwargs)
 
