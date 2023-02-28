@@ -2,20 +2,18 @@ import numpy as np
 import warnings
 import datetime
 import warnings
-from csbdeep.utils import normalize
-from scipy.ndimage.filters import gaussian_filter
+from csbdeep.utils import normalize_mi_ma
 from scipy.ndimage import map_coordinates, zoom
 from scipy.optimize import minimize_scalar
-from skimage.measure import regionprops, label
 from skimage.feature import corner_peaks, corner_subpix
-from stardist.matching import matching
+import scipy.ndimage as ndi
 from skimage.draw import disk
-from collections import namedtuple
 from tqdm import tqdm
 import networkx as nx
 from scipy.spatial.distance import cdist
 from types import SimpleNamespace
 import pandas as pd
+from .peaks import local_peaks
 
 from .lib.spotflow2d import c_spotflow2d, c_cluster_flow2d, c_gaussian2d
 
@@ -82,7 +80,7 @@ def points_to_prob(points, shape, sigma = 1.5,  mode = "max"):
         x = np.zeros(shape, np.float32)
         for px, py in points:
             x[px, py] = 1
-        x = sigma**2*2.*np.pi*gaussian_filter(x, sigma, mode=  "constant")
+        x = sigma**2*2.*np.pi*ndi.gaussian_filter(x, sigma, mode=  "constant")
         x = np.clip(x,0,1)
         
     elif mode =="dist":
@@ -117,16 +115,20 @@ def cluster_flow(flow: np.ndarray, mask: np.ndarray, min_distance:float=1, niter
                 np.float32(dt), np.float32(atol), np.float32(min_distance), np.uint32(niter))
 
 
-def prob_to_points(prob, prob_thresh=.5, min_distance = 2, subpix=False):
+def prob_to_points(prob, prob_thresh=.5, min_distance = 2, subpix=False, mode='skimage'):
     assert prob.ndim==2, "Wrong dimension of prob"
 
-    corners = corner_peaks(prob, min_distance = min_distance, threshold_abs = prob_thresh, threshold_rel=0)
-    if subpix:
-        print("using subpix")
-        corners_sub = corner_subpix(prob, corners, window_size=3)
-        ind = ~np.isnan(corners_sub[:,0])
-        corners[ind] = corners_sub[ind].round().astype(int)
-        
+    if mode =='skimage':
+        corners = corner_peaks(prob, min_distance = min_distance, threshold_abs = prob_thresh, threshold_rel=0)
+        if subpix:
+            print("using subpix")
+            corners_sub = corner_subpix(prob, corners, window_size=3)
+            ind = ~np.isnan(corners_sub[:,0])
+            corners[ind] = corners_sub[ind].round().astype(int)
+    elif mode=='fast':
+        corners = local_peaks(prob, min_distance = min_distance, threshold_abs = prob_thresh)
+    else: 
+        raise NotImplementedError(f'unknown mode {mode} (supported: "skimage", "fast")')
     return corners
 
 def points_to_label(points, shape = None, max_distance=3):
@@ -251,9 +253,8 @@ def multiscale_decimate(y, decimate = (4,4), sigma = 1):
         return y
     assert y.ndim==len(decimate)
     from skimage.measure import block_reduce
-    from scipy.ndimage import gaussian_filter
     y = block_reduce(y, decimate, np.max)
-    y = 2*np.pi*sigma**2*gaussian_filter(y,sigma)
+    y = 2*np.pi*sigma**2*ndi.gaussian_filter(y,sigma)
     y = np.clip(y,0,1)
     return y
 
@@ -422,6 +423,28 @@ def str2scalar(dtype):
             return dtype(v)
 
     return _f
+
+
+def normalize(x: np.ndarray, pmin=1, pmax=99.8, subsample:int = 1, clip = False, ignore_val=None):
+    """
+    normalizes a 2d image with the additional option to ignore a value
+    """
+
+    # create subsampled version to compute percentiles
+    ss_sample = tuple(slice(None,None, subsample) if s>42*subsample else slice(None,None) for s in x.shape)
+
+    y = x[ss_sample]
+
+    if ignore_val is not None:
+        mask = y!=ignore_val
+    else: 
+        mask = np.ones(y.shape, dtype=np.bool)
+
+    if not np.any(mask):
+        return normalize_mi_ma(x, ignore_val, ignore_val, clip=clip)
+
+    mi, ma = np.percentile(y[mask],(pmin, pmax))
+    return normalize_mi_ma(x, mi, ma, clip=clip)    
 
 
 

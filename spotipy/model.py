@@ -172,7 +172,7 @@ class AccuracyCallback(tf.keras.callbacks.Callback):
         self.accs.append(ac)
         self.f1s.append(f1)
 
-        spot_prob = np.concatenate(tuple(details.prob[tuple(p1.T.astype(int))] for p1, details in zip(self.P, p_details)), axis=0)
+        spot_prob = np.concatenate(tuple(details.heatmap[tuple(p1.T.astype(int))] for p1, details in zip(self.P, p_details)), axis=0)
         spot_prob = spot_prob.mean()
 
         print(p_pred[0].shape)
@@ -670,7 +670,7 @@ class SpotNet(CARE):
 
     
     def predict(self, img, prob_thresh=None, n_tiles=(1,1), subpix = False, min_distance=2, scale = None, 
-                    normalizer=None, return_details = False,
+                    normalizer=None, return_details = False, peak_mode='skimage',
                     verbose=True, show_tile_progress=False):
 
         if img.ndim==2:
@@ -691,9 +691,12 @@ class SpotNet(CARE):
         div_by = self._axes_div_by("YXC")
         pad_shape = tuple(int(d*np.ceil(s/d)) for s,d in zip(x.shape, div_by))
         if verbose: print(f"padding to shape {pad_shape}")
-        x = center_pad(x, pad_shape, mode="constant")
+        x = center_pad(x, pad_shape, mode="reflect")
 
         if all(n<=1 for n in n_tiles):
+            if callable(normalizer):
+                x = normalizer(x)
+
             y = self._predict_prob(x, verbose=verbose)
             if scale is not None:
                 print('zooming')
@@ -701,15 +704,14 @@ class SpotNet(CARE):
                     
             y = center_crop(y, img.shape[:2])
             if verbose: print(f"peak detection with prob_thresh={prob_thresh:.2f}, subpix={subpix}, min_distance={min_distance} ...")
-            points = prob_to_points(y, prob_thresh=prob_thresh, subpix=subpix, min_distance=min_distance)
-            points = _filter_shape(points, img.shape[:2])                       
+            points = prob_to_points(y, prob_thresh=prob_thresh, subpix=subpix, min_distance=min_distance, mode=peak_mode)
+                        
         else:
             # output array
             if return_details:
                 y = np.empty(x.shape[:2], np.float32)
 
-            points = [] 
-
+            points = []
             iter_tiles = tile_iterator(x, n_tiles  = n_tiles +(1,),
                                  block_sizes = div_by,
                                  n_block_overlaps= (2,2,0))
@@ -723,28 +725,30 @@ class SpotNet(CARE):
                 if callable(normalizer):
                     tile = normalizer(tile)
                 y_tile = self._predict_prob(tile, verbose=False)
-                y_tile_sub = y_tile[s_src[:2]] 
+                y_tile_sub = y_tile[s_src[:2]]
 
                 if return_details:
                     y[s_dst[:2]] = y_tile_sub
 
                 p = prob_to_points(y_tile_sub, prob_thresh=prob_thresh, subpix=subpix, min_distance=min_distance)
                 p += np.array([s.start for s in s_dst[:2]])[None]
-                points.append(p) 
+                points.append(p)
 
             if return_details:
                 if scale is not None:
-                    print('zooming')
+                    if verbose: print('zooming')
                     y = zoom(y, (1./scale,1./scale), order=1)
                 y = center_crop(y, img.shape[:2])
 
             points = np.concatenate(points, axis=0)
-            points = _filter_shape(points, img.shape[:2])
-        
+            
+        points = _filter_shape(points, img.shape[:2], idxr_array=points)
+
         if verbose: print(f"detected {len(points)} points")
 
         if return_details:
-            details = SimpleNamespace(prob = y)
+            probs = y[tuple(points.T)]
+            details = SimpleNamespace(prob = probs, heatmap = y)
         else: 
             details = SimpleNamespace()
 
@@ -770,6 +774,8 @@ class SpotNet(CARE):
             predict_kwargs = {}
         if optimize_kwargs is None:
             optimize_kwargs = {}
+
+        Y_val = [points_to_prob(p, x.shape[:2], sigma=self.config.train_spot_sigma) for x, p in zip(X_val, P_val)]
 
         def _pad_dims(x):
             return (x if x.ndim==3 else np.expand_dims(x,-1))

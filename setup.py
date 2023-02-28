@@ -1,3 +1,4 @@
+
 from __future__ import absolute_import, print_function
 from setuptools import setup, find_packages, Extension
 from setuptools.command.build_ext import build_ext
@@ -89,7 +90,19 @@ setup(
             'spotipy.lib.spotflow2d',
             sources = ['spotipy/lib/spotflow2d.cpp'],
             extra_compile_args = ['-std=c++11'],
+            include_dirs = get_numpy_include_dirs() + [nanoflann_root]),
+
+        Extension(
+            'spotipy.lib.point_nms',
+            sources = ['spotipy/lib/point_nms.cpp'],
+            extra_compile_args = ['-std=c++11'],
             include_dirs = get_numpy_include_dirs() + [nanoflann_root],
+        ),
+        Extension(
+            'spotipy.lib.filters',
+            sources = ['spotipy/lib/filters.cpp'],
+            extra_compile_args = ['-std=c++11'],
+            include_dirs = get_numpy_include_dirs() ,
         )
     ],
 
