@@ -26,5 +26,5 @@ if __name__ == '__main__':
 
     data = SpotNetData(X,P,patch_size=(128,128), length=1000, augmenter=None)
 
-
+    x, (u,f) = data[0]
     

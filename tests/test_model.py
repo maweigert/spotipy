@@ -13,7 +13,9 @@ def dummy_data(n_samples=16):
 
 if __name__ == '__main__':
 
-    config = Config(n_channel_in=1, train_patch_size=(64,64), mode='mse', backbone='unet', spot_sigma=1, spot_mode = 'max', multiscale=False)
+    config = Config(n_channel_in=1, patch_size=(64,64), loss='mse', 
+                    train_loss_weights=(1,1,0),
+                    backbone='unet', spot_sigma=1, spot_mode = 'max')
 
     model = SpotNet(config, name = 'test', basedir = 'models')
 
@@ -22,9 +24,9 @@ if __name__ == '__main__':
 
     model.train(X,P, validation_data=[Xv, Pv], epochs=10, steps_per_epoch=128)
 
-    model.optimize_thresholds(Xv,Pv)
+    # model.optimize_thresholds(Xv,Pv)
 
-    points, _ = model.predict(X[0])
-    points2, _ = model.predict(X[0], peak_mode='fast')
+    # points, _ = model.predict(X[0])
+    # points2, _ = model.predict(X[0], peak_mode='fast')
 
     

@@ -6,23 +6,19 @@ from collections import namedtuple
 from itertools import product
 import tensorflow as tf
 from scipy.ndimage import zoom
-from scipy.ndimage.filters import maximum_filter
-from functools import lru_cache
 import tensorflow as tf
 
-from csbdeep.internals.nets import custom_unet
 from csbdeep.internals.train import ParameterDecayCallback
 from csbdeep.internals.predict import tile_iterator
 from csbdeep.utils import _raise, backend_channels_last, axes_check_and_normalize, axes_dict, load_json, save_json
-from csbdeep.utils.tf import export_SavedModel, CARETensorBoardImage
+from csbdeep.utils.tf import CARETensorBoardImage
 from csbdeep.models import CARE
 from csbdeep.models import Config as CareConfig
 from csbdeep.internals.train import RollingSequence
 
-from .multiscalenet import multiscale_unet, multiscale_resunet
+from .multiscalenet import multiscale_unet
 from .hrnet import hrnet
 from .utils import _filter_shape, points_to_flow, prob_to_points, points_to_prob, points_matching, optimize_threshold, points_matching, multiscale_decimate, voronoize_from_prob, center_pad, center_crop
-from .unetplus import unetplus_model, unetv2_model
 
 def weighted_bce_loss(extra_weight=1, thr=0.05):
     def _loss(y_true,y_pred):
@@ -186,7 +182,7 @@ class AccuracyCallback(tf.keras.callbacks.Callback):
 
 
 class Config(CareConfig):
-    def __init__(self,axes = "YX", mode = "bce", n_channel_in = 1, remove_bkg = False, spot_sigma=1.5, spot_mode='max', unet_n_depth = 3, spot_weight = 5,  spot_weight_decay=.1 , backbone="unet", activation="relu", last_activation="sigmoid", train_batch_norm=False, fuse_heads=False, foreground_prob=.3, multiscale=True, patch_size=(256,256), multiscale_loss_decay_exponent=2, **kwargs):
+    def __init__(self,axes = "YX", loss = "bce", n_channel_in = 1, remove_bkg = False, spot_sigma=1.5, spot_mode='max', unet_n_depth = 3, train_loss_weights = (1,1,1), spot_weight = 5,  spot_weight_decay=.1 , backbone="unet", activation="relu", train_batch_norm=False, fuse_heads=False, foreground_prob=.3, patch_size=(256,256), multiscale_loss_decay_exponent=2, **kwargs):
         kwargs.setdefault("train_batch_size",2)
         kwargs.setdefault("train_reduce_lr", {'factor': 0.5, 'patience': 40})
         kwargs.setdefault("n_channel_in",n_channel_in)
@@ -194,7 +190,6 @@ class Config(CareConfig):
         kwargs.setdefault("unet_kern_size",3)
         kwargs.setdefault("unet_n_filter_base",32)
         kwargs.setdefault("unet_pool",2)
-        kwargs.setdefault("mode", mode)
         super().__init__(axes=axes, unet_n_depth=unet_n_depth,
                          allow_new_parameters=True, **kwargs)
         self.spot_weight = spot_weight
@@ -206,30 +201,28 @@ class Config(CareConfig):
         self.patch_size = patch_size
         self.foreground_prob = foreground_prob
         self.train_batch_norm      = train_batch_norm
-        self.multiscale = multiscale
         self.fuse_heads = fuse_heads
-        self.last_activation = last_activation
         self.activation = activation
         self.remove_bkg = remove_bkg
+        self.train_loss_weights = train_loss_weights
 
-        if multiscale: 
-            raise NotImplementedError("multiscale not implemented yet")
-
-        assert backbone in ('unet', 'unetv2', 'resunet', 'hrnet' , 'hrnet2')
+        assert backbone in ('unet', )
         self.backbone = backbone
 
-        if spot_mode == 'flow' and not mode in ('mse', 'mae'):
-            raise ValueError('loss mode must be mse or mae for spot_mode=flow')
-
-        if mode in ("mae", "mse", "bce", "scale_sum", "focal","dice"):
-            self.mode = mode
+        if spot_mode in ('max', 'sum'):
+            self.spot_mode = spot_mode
         else:
-            raise ValueError(mode)
+            raise ValueError('spot  mode must be max or sum')
+
+        if loss in ("mae", "mse", "bce"):
+            self.loss = loss
+        else:
+            raise ValueError(loss)
 
 
 class SpotNetData(RollingSequence):
     """ creates a generator from data"""
-    def __init__(self, X,P, patch_size, length, batch_size=4, spot_mode='flow', sigma=2, shuffle=True, augmenter = None):
+    def __init__(self, X,P, patch_size, length, batch_size=4, spot_mode='max', sigma=2, shuffle=True, augmenter = None):
         """datas has to be a tuple of all input/output lists, e.g.  
         datas = (X,Y)
         """
@@ -241,7 +234,7 @@ class SpotNetData(RollingSequence):
 
         assert len(X)==len(P)
 
-        if not spot_mode in ('flow','max', 'sum'):
+        if not spot_mode in ('max', 'sum'):
             raise NotImplementedError(f'unknown mode {spot_mode}')
         
         if x_ndim == nD:
@@ -252,7 +245,7 @@ class SpotNetData(RollingSequence):
         super().__init__(data_size=len(X),
                          batch_size=batch_size, length=length, shuffle=shuffle)
 
-        self.mode = spot_mode
+        self.spot_mode = spot_mode
         self.X, self.P = X, P
         self.batch_size = batch_size
         self.patch_size = patch_size
@@ -278,21 +271,17 @@ class SpotNetData(RollingSequence):
         if self.augmenter is not None:
             X, P = tuple(zip(*tuple(self.augmenter(x, p) for x, p in zip(X, P))))
 
-        if self.mode == 'flow':
-            F = tuple(points_to_flow(p, x.shape[:2], sigma=self.sigma) for x, p in zip(X,P))
-        elif self.mode == 'max':
-            F = tuple(np.expand_dims(points_to_prob(p, x.shape[:2], mode='max', sigma=self.sigma), -1) for x, p in zip(X,P))
-        elif self.mode == 'sum':
-            F = tuple(np.expand_dims(points_to_prob(p, x.shape[:2], mode='sum', sigma=self.sigma), -1) for x, p in zip(X,P))
-        else: 
-            raise NotImplementedError(f'unknown mode {self.mode}')
+        F = tuple(points_to_flow(p, x.shape[:2], sigma=self.sigma) for x, p in zip(X,P))
+
+        U = tuple(np.expand_dims(points_to_prob(p, x.shape[:2], mode=self.spot_mode, sigma=self.sigma), -1) for x, p in zip(X,P))
 
         X = np.stack(X)
+        U = np.stack(U)
         F = np.stack(F)
+
         if X.ndim == 3: # input image has no channel axis
             X = np.expand_dims(X,-1)
-        return X, F
-
+        return X, (U, F)
 
 
 class RemoveBackground(tf.keras.layers.Layer):
@@ -353,85 +342,23 @@ class SpotNet(CARE):
         
     def _build(self):
         
-        if self.config.multiscale:
-            if self.config.backbone=='unet':
-                model, scales = multiscale_unet(
-                    input_shape = (None,None,self.config.n_channel_in),
-                    n_depth=self.config.unet_n_depth,
-                    n_filter_base=self.config.unet_n_filter_base,
-                    kernel_size = self.config.unet_kern_size,
-                    fuse_heads=self.config.fuse_heads,
-                    pool_size=self.config.unet_pool,
-                    activation=self.config.activation,
-                    last_activation=self.config.last_activation
-                )
+        if self.config.backbone=='unet':
+            model, scales = multiscale_unet(
+                input_shape = (None,None,self.config.n_channel_in),
+                n_depth=self.config.unet_n_depth,
+                n_filter_base=self.config.unet_n_filter_base,
+                kernel_size = self.config.unet_kern_size,
+                fuse_heads=self.config.fuse_heads,
+                pool_size=self.config.unet_pool,
+                activation=self.config.activation,
+                last_activation='sigmoid'
+            )
+            scales = (1,) + tuple(scales)
 
-            elif self.config.backbone=='unetv2':
-                scales = tuple(self.config.unet_pool**i for i in range(self.config.unet_n_depth+1))
-                model = unetv2_model(
-                    input_shape = (None,None,self.config.n_channel_in),
-                    n_depth=self.config.unet_n_depth,
-                    n_filter_base=self.config.unet_n_filter_base,
-                    kernel_size = (self.config.unet_kern_size,)*2,
-                    strides=(self.config.unet_pool,)*2,
-                    activation=self.config.activation,
-                    last_activation=self.config.last_activation,
-                    block='conv_basic',
-                    expansion=1.5, 
-                    n_blocks=2,
-                    multi_heads = self.config.multiscale,
-                    fused_heads = self.config.multiscale,
-                    batch_norm=self.config.train_batch_norm)
-                
-            elif self.config.backbone=='resunet':
-                model, scales = multiscale_resunet(
-                    input_shape = (None,None,self.config.n_channel_in),
-                    n_depth=self.config.unet_n_depth,
-                    n_filter_base=self.config.unet_n_filter_base,
-                    kernel_size = self.config.unet_kern_size,
-                    pool_size=self.config.unet_pool,
-                    activation=self.config.activation,
-                    last_activation=self.config.last_activation
-                )
-            elif self.config.backbone=='hrnet':
-                assert self.config.unet_pool==2
-                scales = tuple(self.config.unet_pool**i for i in range(self.config.unet_n_depth+1))
-                model = hrnet(
-                    input_shape = (None,None,self.config.n_channel_in),
-                    n_depth=self.config.unet_n_depth,
-                    n_filter_base=self.config.unet_n_filter_base,
-                    last_activation=self.config.last_activation,
-                    batch_norm=True, 
-                    multi_heads=True
-                )
-            elif self.config.backbone=='hrnet2':
-                from .seg_hrnet import seg_hrnet
-                scales = tuple(2**i for i in range(self.config.unet_n_depth+1))
-                model = seg_hrnet(
-                    input_shape = (None,None,self.config.n_channel_in),
-                    n_depth=self.config.unet_n_depth,
-                    multi_head=True
-                )
-            else:
-                raise ValueError(self.config.backbone)
-            
-            self.multiscale_factors = scales
-
-        else:
-            if self.config.backbone=='unet':
-                model = custom_unet((None,None,self.config.n_channel_in),
-                           n_depth=self.config.unet_n_depth,
-                           n_channel_out=3 if self.config.spot_mode == 'flow' else 1,
-                           n_filter_base=self.config.unet_n_filter_base,
-                           kernel_size = (self.config.unet_kern_size,)*2,
-                           activation=self.config.activation,
-                           pool_size=(self.config.unet_pool,self.config.unet_pool),
-                           last_activation='linear' if self.config.spot_mode == 'flow' else 'sigmoid')
-                
-            elif self.config.backbone=='hrnet':
-                model = hrnet((None,None,self.config.n_channel_in), n_channel_out=1)
-            else:
-                raise ValueError(self.config.backbone)
+        else: 
+            raise ValueError(f"Unknown backbone: {self.config.backbone}")
+        
+        self.multiscale_factors = scales
 
         inp = tf.keras.layers.Input((None,None, self.config.n_channel_in))
 
@@ -441,11 +368,7 @@ class SpotNet(CARE):
         else: 
             out = model(inp)
 
-        if self.config.spot_mode=='flow':
-            out = tf.keras.layers.Lambda(lambda x: tf.keras.backend.l2_normalize(x, axis=-1))(out)
-
         model = tf.keras.models.Model(inp, out)
-
 
         return model
 
@@ -470,13 +393,7 @@ class SpotNet(CARE):
 
     def prepare_targets(self, y):
         """ from a single output (batch), generate a list of additional targets"""
-
-        target = y
-        
-        if self.config.multiscale:
-            target = list(self._prepare_target_multiscale(y))
-            
-        return target
+        return list(self._prepare_target_multiscale(y))
 
     
     @property
@@ -488,33 +405,28 @@ class SpotNet(CARE):
             optimizer = tf.keras.optimizers.Adam(learning_rate=self.config.train_learning_rate)
         # self.keras_model.compile(optimizer, loss="binary_crossentropy")
 
-        weight = tf.keras.backend.variable(self.config.spot_weight)
+        lw_final, lw_multiscale, lw_flow = self.config.train_loss_weights
 
-        if self.config.mode == "bce":
-            loss = [weighted_bce_loss(weight)]
-        elif self.config.mode == "mse":
-            loss = [weighted_mse_loss(weight, thr=-.8)]
-        elif self.config.mode == "mae":
-            loss = [weighted_mae_loss(weight, thr=-.8)]
-        elif self.config.mode == "scale_sum":
-            loss = [scale_sum(weight)]
-        elif self.config.mode == "focal":
-            loss = [focal_loss(2.0, weight)]
-        elif self.config.mode == "dice":
-            loss = [dice_loss]
-        else:
-            raise ValueError(self.config.mode)
-
-        loss_weights = [1]
         
-        if self.config.multiscale:
-            loss += [tf.keras.backend.binary_crossentropy]*(len(self.multiscale_factors)-1)
-            loss_weights = list(1/np.array(self.multiscale_factors)**self.config.train_multiscale_loss_decay_exponent)
 
-            loss += [tf.keras.losses.mean_absolute_error]
-            loss_weights += [1]
-        else:
-            loss_weights = [1]
+        # Loss for final layer 
+        weight = tf.keras.backend.variable(self.config.spot_weight)
+        if self.config.loss == "bce":
+            loss = [weighted_bce_loss(weight)]
+        elif self.config.loss == "mse":
+            loss = [weighted_mse_loss(weight, thr=-.8)]
+        elif self.config.loss == "mae":
+            loss = [weighted_mae_loss(weight, thr=-.8)]
+            raise ValueError(self.config.mode)
+        loss_weights = [lw_final]
+        
+        # Loss for multiscale layers 
+        loss += [tf.keras.backend.binary_crossentropy]*(len(self.multiscale_factors)-1)
+        loss_weights += list(lw_multiscale/np.array(self.multiscale_factors[1:])**self.config.multiscale_loss_decay_exponent)
+
+        # loss for flow 
+        loss += [tf.keras.losses.mean_absolute_error]
+        loss_weights += [lw_flow]
 
         print("loss_weights ", loss_weights)
         self.keras_model.compile(optimizer, loss=loss, loss_weights = loss_weights)
@@ -605,29 +517,28 @@ class SpotNet(CARE):
                                 patch_size=self.config.patch_size,
                                 batch_size=self.config.train_batch_size)
         
-        _data_val = SpotNetData(Xv, Pv,
+        self.data_val = SpotNetData(Xv, Pv,
                                 batch_size=max(16,len(Xv)), length=1,
                                 shuffle=False,
                                 spot_mode=self.config.spot_mode,
                                 patch_size=self.config.patch_size,
                                 sigma=self.config.spot_sigma,
                                 )
-        validation_data = _data_val[0]
-
-        if self.config.multiscale:
-            validation_data = (validation_data[0],
-                               list(self.prepare_targets(.5+.5*validation_data[1][...,:1])) + [validation_data[1]])
-                               
-
-            def _copy_gen(gen):
-                for x, y in gen:
-                    yield x , list(self.prepare_targets(.5+.5*y[...,:1])) + [y]
-            self.data = _copy_gen(self.data)
-
         
-        data_train = iter(self.data)
+        
+        
+        def _transform(u,f):
+            return list(self.prepare_targets(u)) + [f]                               
 
+        def _copy_gen(gen):
+            for x, (y, f) in gen:
+                yield x , _transform(y,f)
+
+        validation_data = self.data_val[0][0], _transform(*self.data_val[0][1])
+        self.data = _copy_gen(self.data)
         self.data_val = validation_data
+
+        data_train = iter(self.data)
 
         callbacks = self.callbacks
         self.callbacks.append(AccuracyCallback(self, self.tb_callback, Xv, Pv))
@@ -660,12 +571,7 @@ class SpotNet(CARE):
     def _predict_prob(self, x, **kwargs):
         assert x.ndim ==3 and x.shape[-1]==self.config.n_channel_in
         u = self.keras_model.predict(x[np.newaxis], **kwargs)
-        if self.config.multiscale:
-            u = u[-1] 
-
-        if self.config.spot_mode=='flow':
-            u = u / (np.linalg.norm(u, axis=-1, keepdims=True)+1e-7)
-
+        u = u[0] 
         return u[0,...,0]
 
     
@@ -742,7 +648,7 @@ class SpotNet(CARE):
 
             points = np.concatenate(points, axis=0)
             
-        points = _filter_shape(points, img.shape[:2], idxr_array=points)
+        points = _filter_shape(points, img.shape[:2])
 
         if verbose: print(f"detected {len(points)} points")
 
