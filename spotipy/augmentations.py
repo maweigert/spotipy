@@ -41,14 +41,48 @@ class FlipRot90(Augmentation):
 class Rotate(Augmentation):
     def __call__(self, img, points):
         center = tuple(np.array(img.shape[1::-1]) / 2)
-        angle = np.random.randint(0,360)
+        angle = np.random.uniform(0,360)
         M = cv2.getRotationMatrix2D(center, angle, 1.0)
+        M_inv = cv2.getRotationMatrix2D(center, -angle, 1.0)
         img = cv2.warpAffine(img, M, img.shape[1::-1], flags=cv2.INTER_LINEAR)
         points = points-center 
-        points = (M@points.T).T + center
+        points = (M_inv[:2,:2]@points.T).T + center
         points = _filter_shape(points, img.shape[:2])
 
         return img, points
     
+class IntensityScaleShift(Augmentation):
+    def __init__(self, scale=(.5,2.), shift=(-1.,.1)):
+        super().__init__()
+        self.scale = scale
+        self.shift = shift
 
+    def __call__(self, img, points):
+        scale = np.random.uniform(*self.scale)
+        shift = np.random.uniform(*self.shift)
+        img = img*scale + shift
+        return img, points
+class AdditiveNoise(Augmentation):
+    def __init__(self, sigma=(0,.1)):
+        super().__init__()
+        self.sigma = sigma
 
+    def __call__(self, img, points):
+        sigma = np.random.uniform(*self.sigma)
+        noise = sigma*(np.random.normal(0, 1, img.shape)).astype(np.float32)
+        img = img + noise
+        return img, points
+    
+class AugmentationPipeline(object):
+    def __init__(self,):
+        super().__init__()
+        self.augmentations = [] 
+
+    def add(self, augmentation, prob=1.):
+        self.augmentations.append((augmentation, prob))
+
+    def __call__(self, img, points):
+        for a, p in self.augmentations:
+            if np.random.uniform(0,1) < p:
+                img, points = a(img, points)
+        return img, points

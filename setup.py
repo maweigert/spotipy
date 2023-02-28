@@ -117,7 +117,7 @@ setup(
         'csbdeep',
         'stardist',
         'pandas'
-        # 'opencv-python'
+        'opencv-python'
     ],
 
 )
