@@ -51,6 +51,15 @@ void _max_filter_vert(float *src, float * dst, const int kernel_size, const int 
     }
 }
 
+
+void _transpose(float *src, float *dst, const int Nx, const int Ny){
+#pragma omp parallel for
+    for (int j = 0; j < Nx; j++){
+        for (int i = 0; i < Ny; i++){
+            dst[j * Ny + i] = src[i * Nx + j];
+        }
+    }
+}
 static PyObject *c_maximum_filter_2d_float(PyObject *self, PyObject *args)
 {
 
@@ -87,13 +96,19 @@ static PyObject *c_maximum_filter_2d_float(PyObject *self, PyObject *args)
 
     float *src_data = (float *)PyArray_DATA(src);
     float *dst_data = (float *)PyArray_DATA(dst);
-    float *tmp_data = new float[Nx * Ny];
+    float *tmp = new float[Nx * Ny];
 
-    _max_filter_horiz(src_data, tmp_data, kernel_size, Nx, Ny);
-    _max_filter_vert(tmp_data, dst_data, kernel_size, Nx, Ny);
+    _max_filter_horiz(src_data, tmp, kernel_size, Nx, Ny);
+    _max_filter_vert(tmp, dst_data, kernel_size, Nx, Ny);
+    
+    // _max_filter_horiz(src_data, tmp, kernel_size, Nx, Ny);
+    // _transpose(tmp, tmp2, Nx, Ny);
+    // _max_filter_horiz(tmp2, tmp, kernel_size, Nx, Ny);
+    // _transpose(tmp, dst_data, Nx, Ny);
+
+    delete[] tmp;
 
 
-    delete[] tmp_data;
     return PyArray_Return(dst);
 }
 
