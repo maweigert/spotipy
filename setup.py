@@ -116,7 +116,7 @@ setup(
         'scikit-image',
         'csbdeep',
         'stardist',
-        'pandas'
+        'pandas',
         'opencv-python'
     ],
 
