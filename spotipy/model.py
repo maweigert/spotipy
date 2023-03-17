@@ -707,9 +707,9 @@ class SpotNet(CARE):
 
         div_by = self._axes_div_by("YXC")
         pad_shape = tuple(int(d*np.ceil(s/d)) for s,d in zip(x.shape, div_by))
-        if verbose: print(f"padding to shape {pad_shape}")
+        if verbose: print(f"Padding to shape {pad_shape}")
         x = center_pad(x, pad_shape, mode="reflect")
-
+        if verbose: print("Predicting...")
         if all(n<=1 for n in n_tiles):
             if callable(normalizer):
                 x = normalizer(x)
@@ -729,6 +729,7 @@ class SpotNet(CARE):
                 y = np.empty(x.shape[:2], np.float32)
 
             points = []
+            probs = []
             iter_tiles = tile_iterator(x, n_tiles  = n_tiles +(1,),
                                  block_sizes = div_by,
                                  n_block_overlaps= (2,2,0))
@@ -747,9 +748,12 @@ class SpotNet(CARE):
                 if return_details:
                     y[s_dst[:2]] = y_tile_sub
 
+
                 p = prob_to_points(y_tile_sub, prob_thresh=prob_thresh, subpix=subpix, min_distance=min_distance)
+                probs += y_tile_sub[tuple(p.T)].tolist()
                 p += np.array([s.start for s in s_dst[:2]])[None]
                 points.append(p)
+
 
             if return_details:
                 if scale is not None:
@@ -760,10 +764,12 @@ class SpotNet(CARE):
             points = np.concatenate(points, axis=0)
             points = _filter_shape(points, img.shape[:2], idxr_array=points)
 
+            probs = np.array(probs)
+            probs = _filter_shape(probs, img.shape[:2], idxr_array=points)
+
         if verbose: print(f"detected {len(points)} points")
 
         if return_details:
-            probs = y[tuple(points.T)]
             details = SimpleNamespace(prob = probs, heatmap = y)
         else: 
             details = SimpleNamespace()
