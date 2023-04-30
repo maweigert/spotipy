@@ -108,7 +108,6 @@ setup(
         'imageio',
         'scikit-image',
         'csbdeep',
-        'stardist',
         'pandas'
         # 'opencv-python'
     ],

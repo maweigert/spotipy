@@ -21,10 +21,10 @@ from csbdeep.utils.tf import export_SavedModel, CARETensorBoard, CARETensorBoard
 from csbdeep.models import BaseModel, BaseConfig, CARE
 from csbdeep.models import Config as CareConfig
 from csbdeep.internals.train import RollingSequence
-from stardist.sample_patches import get_valid_inds, sample_patches
 
 from .multiscalenet import multiscale_unet, multiscale_resunet
 from .hrnet import hrnet
+from .sample_patches import sample_patches, get_valid_inds
 from .utils import _filter_shape, prob_to_points, points_to_prob, points_matching, optimize_threshold, points_matching, multiscale_decimate, voronoize_from_prob, center_pad, center_crop
 from .unetplus import unetplus_model, unetv2_model
 
