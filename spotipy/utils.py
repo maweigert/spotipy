@@ -98,7 +98,6 @@ def points_to_prob(points, shape, sigma = 1.5,  mode = "max"):
 
 def prob_to_points(prob, prob_thresh=.5, min_distance = 2, subpix=False, mode='skimage'):
     assert prob.ndim==2, "Wrong dimension of prob"
-
     if mode =='skimage':
         corners = corner_peaks(prob, min_distance = min_distance, threshold_abs = prob_thresh, threshold_rel=0)
         if subpix:
@@ -464,7 +463,6 @@ def normalize_fast2d(x, pmin=1, pmax=99.8, dst_range=(0,1.), clip = False, sub =
             print(f'padding with {pads}')
             x = np.pad(x,tuple((0,p) for p in pads), mode='reflect')
 
-        print(x.shape)
         n_tiles = tuple(max(1,s//b) for s,b in zip(x.shape, blocksize))
         
         print(f"normalizing_fast adaptively with {n_tiles} tiles and order {order}")        

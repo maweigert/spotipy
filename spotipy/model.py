@@ -689,7 +689,6 @@ class SpotNet(CARE):
     def predict(self, img, prob_thresh=None, n_tiles=(1,1), subpix = False, min_distance=2, scale = None, 
                     normalizer=None, return_details = False, peak_mode='skimage',
                     verbose=True, show_tile_progress=False):
-
         if img.ndim==2:
             img = img[...,np.newaxis]
         if not img.shape[-1]==self.config.n_channel_in:
@@ -749,8 +748,9 @@ class SpotNet(CARE):
                     y[s_dst[:2]] = y_tile_sub
 
 
-                p = prob_to_points(y_tile_sub, prob_thresh=prob_thresh, subpix=subpix, min_distance=min_distance)
-                probs += y_tile_sub[tuple(p.T)].tolist()
+                p = prob_to_points(y_tile_sub, prob_thresh=prob_thresh, subpix=subpix, min_distance=min_distance, mode=peak_mode)
+                # FIXME: fast peak mode sometimes returns float values
+                probs += y_tile_sub[tuple(p.astype(int).T)].tolist()
                 p += np.array([s.start for s in s_dst[:2]])[None]
                 points.append(p)
 
