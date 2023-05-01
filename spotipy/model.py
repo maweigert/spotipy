@@ -715,13 +715,13 @@ class SpotNet(CARE):
 
             y = self._predict_prob(x, verbose=verbose)
             if scale is not None:
-                print('zooming')
+                if verbose: print('zooming')
                 y = zoom(y, (1./scale,1./scale), order=1)
                     
             y = center_crop(y, img.shape[:2])
             if verbose: print(f"peak detection with prob_thresh={prob_thresh:.2f}, subpix={subpix}, min_distance={min_distance} ...")
             points = prob_to_points(y, prob_thresh=prob_thresh, subpix=subpix, min_distance=min_distance, mode=peak_mode)
-                        
+            probs = y[tuple(points.astype(int).T)].tolist()
         else:
             # output array
             if return_details:
@@ -731,28 +731,42 @@ class SpotNet(CARE):
             probs = []
             iter_tiles = tile_iterator(x, n_tiles  = n_tiles +(1,),
                                  block_sizes = div_by,
-                                 n_block_overlaps= (2,2,0))
+                                 n_block_overlaps= (4,4,0))
             if callable(show_tile_progress):
                 iter_tiles = show_tile_progress(iter_tiles)
             else:
                 iter_tiles = tqdm(iter_tiles, total = np.prod(n_tiles),
                                   disable=not show_tile_progress)
 
+            # tile is padded and tile[s_src] -> global[s_dst] 
             for tile, s_src, s_dst in iter_tiles:
                 if callable(normalizer):
                     tile = normalizer(tile)
                 y_tile = self._predict_prob(tile, verbose=False)
+
+
+                # points that include padded region 
+                p = prob_to_points(y_tile, prob_thresh=prob_thresh, subpix=subpix, min_distance=min_distance, mode=peak_mode)
+
+                # the next lines make sure that points only lie in the region that is written to  
+                
+                # remove offset 
+                p -= np.array([s.start for s in s_src[:2]])[None]
+                write_shape = tuple(s.stop-s.start for s in s_dst[:2])
+                # filter points that are outside of the write tile region 
+                p = _filter_shape(p, write_shape, idxr_array=p)
+
                 y_tile_sub = y_tile[s_src[:2]]
 
-                if return_details:
-                    y[s_dst[:2]] = y_tile_sub
-
-
-                p = prob_to_points(y_tile_sub, prob_thresh=prob_thresh, subpix=subpix, min_distance=min_distance, mode=peak_mode)
                 # FIXME: fast peak mode sometimes returns float values
                 probs += y_tile_sub[tuple(p.astype(int).T)].tolist()
+                
+                # add global offset 
                 p += np.array([s.start for s in s_dst[:2]])[None]
                 points.append(p)
+                
+                if return_details:
+                    y[s_dst[:2]] = y_tile_sub
 
 
             if return_details:
@@ -765,7 +779,6 @@ class SpotNet(CARE):
 
             probs = np.array(probs)
             probs = _filter_shape(probs, img.shape[:2], idxr_array=points)
-
             points = _filter_shape(points, img.shape[:2], idxr_array=points)
 
         if verbose: print(f"detected {len(points)} points")
