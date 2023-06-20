@@ -687,8 +687,8 @@ class SpotNet(CARE):
 
     
     def predict(self, img, prob_thresh=None, n_tiles=(1,1), subpix = False, min_distance=2, scale = None, 
-                    normalizer=None, return_details = False, peak_mode='skimage',
-                    verbose=True, show_tile_progress=False):
+                    normalizer=None, return_details:bool = False, peak_mode:str='skimage', exclude_border:bool=True, 
+                    verbose:bool=True, show_tile_progress:bool=False):
         if img.ndim==2:
             img = img[...,np.newaxis]
         if not img.shape[-1]==self.config.n_channel_in:
@@ -720,7 +720,7 @@ class SpotNet(CARE):
                     
             y = center_crop(y, img.shape[:2])
             if verbose: print(f"peak detection with prob_thresh={prob_thresh:.2f}, subpix={subpix}, min_distance={min_distance} ...")
-            points = prob_to_points(y, prob_thresh=prob_thresh, subpix=subpix, min_distance=min_distance, mode=peak_mode)
+            points = prob_to_points(y, prob_thresh=prob_thresh, subpix=subpix, min_distance=min_distance, mode=peak_mode, exclude_border=exclude_border)
             probs = y[tuple(points.astype(int).T)].tolist()
         else:
             # output array

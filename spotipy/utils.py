@@ -96,17 +96,17 @@ def points_to_prob(points, shape, sigma = 1.5,  mode = "max"):
     return x
 
 
-def prob_to_points(prob, prob_thresh=.5, min_distance = 2, subpix=False, mode='skimage'):
+def prob_to_points(prob, prob_thresh=.5, min_distance = 2, subpix:bool=False, mode:str='skimage',exclude_border:bool=True):
     assert prob.ndim==2, "Wrong dimension of prob"
     if mode =='skimage':
-        corners = corner_peaks(prob, min_distance = min_distance, threshold_abs = prob_thresh, threshold_rel=0)
+        corners = corner_peaks(prob, min_distance = min_distance, threshold_abs = prob_thresh, threshold_rel=0, exclude_border=exclude_border)
         if subpix:
             print("using subpix")
             corners_sub = corner_subpix(prob, corners, window_size=3)
             ind = ~np.isnan(corners_sub[:,0])
             corners[ind] = corners_sub[ind].round().astype(int)
     elif mode=='fast':
-        corners = local_peaks(prob, min_distance = min_distance, threshold_abs = prob_thresh)
+        corners = local_peaks(prob, min_distance = min_distance, threshold_abs = prob_thresh, exclude_border=exclude_border)
     else: 
         raise NotImplementedError(f'unknown mode {mode} (supported: "skimage", "fast")')
     return corners

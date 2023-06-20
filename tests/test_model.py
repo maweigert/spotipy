@@ -11,6 +11,8 @@ def dummy_data(n_samples=16):
     Y = np.stack(tuple(points_to_prob(p, (128,128)) for p in P))
     return X, Y, P
 
+
+
 if __name__ == '__main__':
 
     
