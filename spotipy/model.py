@@ -709,6 +709,9 @@ class SpotNet(CARE):
         if verbose: print(f"Padding to shape {pad_shape}")
         x = center_pad(x, pad_shape, mode="reflect")
         if verbose: print("Predicting...")
+        
+        prob_kwargs = dict(prob_thresh=prob_thresh, subpix=subpix, min_distance=min_distance, mode=peak_mode, exclude_border=exclude_border)
+        
         if all(n<=1 for n in n_tiles):
             if callable(normalizer):
                 x = normalizer(x)
@@ -720,7 +723,7 @@ class SpotNet(CARE):
                     
             y = center_crop(y, img.shape[:2])
             if verbose: print(f"peak detection with prob_thresh={prob_thresh:.2f}, subpix={subpix}, min_distance={min_distance} ...")
-            points = prob_to_points(y, prob_thresh=prob_thresh, subpix=subpix, min_distance=min_distance, mode=peak_mode, exclude_border=exclude_border)
+            points = prob_to_points(y, **prob_kwargs)
             probs = y[tuple(points.astype(int).T)].tolist()
         else:
             # output array
@@ -746,9 +749,7 @@ class SpotNet(CARE):
 
 
                 # points that include padded region 
-                p = prob_to_points(y_tile, prob_thresh=prob_thresh, subpix=subpix, min_distance=min_distance, mode=peak_mode)
-
-                # the next lines make sure that points only lie in the region that is written to  
+                p = prob_to_points(y_tile, **prob_kwargs)
                 
                 # remove offset 
                 p -= np.array([s.start for s in s_src[:2]])[None]

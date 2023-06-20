@@ -1,5 +1,5 @@
 import numpy as np 
-from spotipy.peaks import nms_points_2d
+from spotipy.peaks import nms_points_2d, local_peaks
 
 def demo_nms():
     np.random.seed(42) 
@@ -27,10 +27,9 @@ def demo_nms():
 
 
 
-
-
-if __name__ == "__main__":
+def test_peaks():
     from skimage.feature import peak_local_max, corner_peaks
+    import scipy.ndimage as ndi
     from timeit import default_timer as timer
 
     np.random.seed(42) 
@@ -57,8 +56,17 @@ if __name__ == "__main__":
     print(f"corner_peaks: {t:.3f} s")
 
     t = timer()
-    p3 = local_peaks(x, min_distance=min_distance, threshold_abs=.1, threshold_rel=0)
+    p3 = local_peaks(x, min_distance=min_distance, threshold_abs=.1, threshold_rel=0, exclude_border=False)
     t = timer() - t
     print(f"local : {t:.3f} s")
+    
 
 
+if __name__ == "__main__":
+    # test_peaks()
+
+    x = np.zeros((100,100))
+    x[0,0] = 1
+    
+    p1 = local_peaks(x, min_distance=1, threshold_abs=.1, threshold_rel=0, exclude_border=False)
+    p2 = local_peaks(x, min_distance=1, threshold_abs=.1, threshold_rel=0, exclude_border=True)
