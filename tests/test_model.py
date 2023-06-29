@@ -1,21 +1,21 @@
 import numpy as np 
 from spotipy.model import Config, SpotNetData, SpotNet
 from spotipy.utils import points_to_prob
+from spotipy.utils import normalize
 
+np.random.seed(42) 
 
 def dummy_data(n_samples=16):
-    X = np.random.uniform(0,1,(n_samples, 128, 128))
-    P = np.random.randint(0,128,(n_samples, 21, 2))
-    for x, p in zip(X, P):
-        x[tuple(p.T.tolist())] = np.random.uniform(2,5,len(p))
-    Y = np.stack(tuple(points_to_prob(p, (128,128)) for p in P))
+    
+    P = np.random.randint(0,256,(n_samples, 21, 2))
+    X = np.stack(tuple(points_to_prob(p, (256,256), sigma=1.5) for p in P)) 
+    Y = np.stack(tuple(points_to_prob(p, (256,256), sigma=1.5) for p in P))
+    X = X + np.random.normal(0,0.1, X.shape)
     return X, Y, P
 
 
+def test_train():
 
-if __name__ == '__main__':
-
-    
     config = Config(n_channel_in=1, train_patch_size=(64,64), backbone='unet', spot_sigma=1)
 
     model = SpotNet(config, name = None, basedir = None)
@@ -30,4 +30,13 @@ if __name__ == '__main__':
     points, _ = model.predict(X[0])
     points2, _ = model.predict(X[0], peak_mode='fast')
 
+if __name__ == '__main__':
+
+    X,Y, P = dummy_data(128)
     
+    
+    model = SpotNet.from_pretrained('hybiss')
+    
+    
+    p1, d1 = model.predict(X[0], scale=.73, return_details=True)
+    p2, d2 = model.predict(X[0], scale=0.73, n_tiles=(2,2), return_details=True)

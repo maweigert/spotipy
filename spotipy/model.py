@@ -686,7 +686,7 @@ class SpotNet(CARE):
             return self.keras_model.predict(x[np.newaxis], **kwargs)[0,...,0]
 
     
-    def predict(self, img, prob_thresh=None, n_tiles=(1,1), subpix = False, min_distance=2, scale = None, 
+    def predict(self, img, prob_thresh=None, n_tiles=(1,1), subpix = False, min_distance=1, scale = None, 
                     normalizer=None, return_details:bool = False, peak_mode:str='skimage', exclude_border:bool=True, 
                     verbose:bool=True, show_tile_progress:bool=False):
         if img.ndim==2:
@@ -707,7 +707,8 @@ class SpotNet(CARE):
         div_by = self._axes_div_by("YXC")
         pad_shape = tuple(int(d*np.ceil(s/d)) for s,d in zip(x.shape, div_by))
         if verbose: print(f"Padding to shape {pad_shape}")
-        x = center_pad(x, pad_shape, mode="reflect")
+        x, padding = center_pad(x, pad_shape, mode="reflect")
+        
         if verbose: print("Predicting...")
         
         prob_kwargs = dict(prob_thresh=prob_thresh, subpix=subpix, min_distance=min_distance, mode=peak_mode, exclude_border=exclude_border)
@@ -747,11 +748,10 @@ class SpotNet(CARE):
                     tile = normalizer(tile)
                 y_tile = self._predict_prob(tile, verbose=False)
 
-
                 # points that include padded region 
                 p = prob_to_points(y_tile, **prob_kwargs)
                 
-                # remove offset 
+                # remove global offset 
                 p -= np.array([s.start for s in s_src[:2]])[None]
                 write_shape = tuple(s.stop-s.start for s in s_dst[:2])
                 # filter points that are outside of the write tile region 
@@ -778,7 +778,14 @@ class SpotNet(CARE):
 
             points = np.concatenate(points, axis=0)
 
+            # remove padding 
+            points = points - np.array((padding[0][0], padding[1][0]))[None]
+
             probs = np.array(probs)
+            if scale is not None:
+                points = points/scale
+                
+                
             probs = _filter_shape(probs, img.shape[:2], idxr_array=points)
             points = _filter_shape(points, img.shape[:2], idxr_array=points)
 
