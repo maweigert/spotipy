@@ -366,7 +366,7 @@ if __name__ == '__main__':
 def center_pad(x, shape, mode = "reflect"):
     """ pads x to shape , inverse of center_crop"""
     if x.shape == shape:
-        return x, ((0,0) for _ in x.shape)
+        return x, tuple((0,0) for _ in x.shape)
     if not all([s1<=s2 for s1,s2 in zip(x.shape,shape)]):
         raise ValueError(f"shape of x {x.shape} is larger than final shape {shape}")
     diff = np.array(shape)- np.array(x.shape)
