@@ -93,6 +93,6 @@ def local_peaks(image:np.ndarray, min_distance=1, exclude_border=True, threshold
     coord = np.nonzero(mask)
     intensities = image[coord]
     coord = np.stack(coord, axis=1)
+    points = (nms_points_2d(coord, min_distance=min_distance)).astype(int)
 
-    points = nms_points_2d(coord, min_distance=min_distance)
     return points
