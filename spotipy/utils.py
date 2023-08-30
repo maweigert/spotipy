@@ -371,7 +371,9 @@ def center_pad(x, shape, mode = "reflect"):
         raise ValueError(f"shape of x {x.shape} is larger than final shape {shape}")
     diff = np.array(shape)- np.array(x.shape)
     pads = tuple((int(np.ceil(d/2)),d-int(np.ceil(d/2))) if d>0 else (0,0) for d in diff)
-    return np.pad(x,pads, mode=mode), pads
+    if len(x.shape)>len(shape):
+        pads = pads + ((0,0),)*(len(x.shape)-len(shape))
+    return np.pad(x, pads, mode=mode), pads
 
 
 def center_crop(x, shape):
@@ -381,12 +383,12 @@ def center_crop(x, shape):
     z = center_crop(y,x.shape)
     np.allclose(x,z)
     """
-    if x.shape == shape:
+    if x.shape[:2] == shape:
         return x
-    if not all([s1>=s2 for s1,s2 in zip(x.shape,shape)]):
+    if not all([s1>=s2 for s1,s2 in zip(x.shape[:2],shape)]):
         raise ValueError(f"shape of x {x.shape} is smaller than final shape {shape}")
-    diff = np.array(x.shape)- np.array(shape)
-    ss = tuple(slice(int(np.ceil(d/2)),s-d+int(np.ceil(d/2))) if d>0 else slice(None) for d,s in zip(diff,x.shape))
+    diff = np.array(x.shape[:2])- np.array(shape)
+    ss = tuple(slice(int(np.ceil(d/2)),s-d+int(np.ceil(d/2))) if d>0 else slice(None) for d,s in zip(diff,x.shape[:2]))
     return x[ss]
 
 
