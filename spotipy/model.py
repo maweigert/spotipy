@@ -311,7 +311,11 @@ class SpotNetData(RollingSequence):
                                  patch_size=self.patch_size, n_samples=1,
                                  valid_inds=self.get_valid_inds(k)) for k in idx]
 
-        X,Y = list(zip(*[(x[0],y[0]) for y,x in arrays]))
+        if self.n_channel is None:
+            X,Y = list(zip(*[(x[0],y[0]) for y,x in arrays]))
+        else:
+            X, Y = list(zip(*[(np.stack([_x[0] for _x in x],axis=-1), y[0]) for y,*x in arrays]))
+        
 
         if self.augmenter is not None:
             if self.workers>1:
@@ -607,14 +611,6 @@ class SpotNet(CARE):
             axes = self.config.axes
         axes = axes_check_and_normalize('S'+axes,X[0].ndim+1)
         ax = axes_dict(axes)
-
-        for a,div_by in zip(axes,self._axes_div_by(axes)):
-            n = X[0].shape[ax[a]-1]
-            if n % div_by != 0:
-                raise ValueError(
-                    "training images must be evenly divisible by %d along axis %s"
-                    " (which has incompatible size %d)" % (div_by,a,n)
-                )
 
         if epochs is None:
             epochs = self.config.train_epochs
