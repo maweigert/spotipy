@@ -1,3 +1,5 @@
+**DEPRECATION NOTICE: this repository is not actively maintained. Please visit [the Spotiflow repository](https://github.com/weigertlab/spotiflow) (yes, we changed the name!) for an up-to-date version with new and improved features.**
+
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/spotipy-detector.svg)
 ![PyPI - Version](https://img.shields.io/pypi/v/spotipy-detector)
 ![PyPI - License](https://img.shields.io/pypi/l/spotipy-detector)
